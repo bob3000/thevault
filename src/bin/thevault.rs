@@ -5,6 +5,7 @@ use std::fs::File;
 use std::io;
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
+use std::process::{self, Command, Stdio};
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -21,7 +22,11 @@ enum Opt {
     },
     Edit {
         #[structopt(long, short, parse(from_os_str))]
-        out: Option<PathBuf>,
+        file: Option<PathBuf>,
+        #[structopt(long, short)]
+        password: Option<String>,
+        #[structopt(long, short("w"), parse(from_os_str))]
+        password_file: Option<PathBuf>,
     },
     Encrypt {
         #[structopt(long, short, parse(from_os_str))]
@@ -35,7 +40,11 @@ enum Opt {
     },
     View {
         #[structopt(long, short, parse(from_os_str))]
-        file: Option<PathBuf>,
+        file: PathBuf,
+        #[structopt(long, short)]
+        password: Option<String>,
+        #[structopt(long, short("w"), parse(from_os_str))]
+        password_file: Option<PathBuf>,
     },
 }
 
@@ -70,7 +79,7 @@ fn read_process_write<F>(
     mut fn_process: F,
 ) -> anyhow::Result<()>
 where
-    F: FnMut(&Vec<u8>) -> Vec<u8>,
+    F: FnMut(&Vec<u8>) -> anyhow::Result<Vec<u8>>,
 {
     let mut buf: Vec<u8> = Vec::new();
     match file {
@@ -80,7 +89,7 @@ where
             .unwrap(),
         None => io::stdin().read_to_end(&mut buf).unwrap(),
     };
-    let processed = fn_process(&buf);
+    let processed = fn_process(&buf)?;
     match outfile {
         Some(path) => {
             let mut file = File::create(path.clone()).with_context(|| {
@@ -108,17 +117,16 @@ fn vault_decrypt(
     };
     let pass = get_password(password, pass_file)?;
     read_process_write(file_input, file_output, |cipher_package| {
-        thevault::decrypt(SecStr::from(pass.clone()), cipher_package)
-            .unwrap()
+        let plaintext = thevault::decrypt(SecStr::from(pass.clone()), cipher_package)?
             .unsecure()
-            .to_vec()
+            .to_vec();
+        Ok(plaintext)
     })?;
     Ok(())
 }
 
 fn vault_edit(
     file_input: Option<PathBuf>,
-    file_output: Option<PathBuf>,
     password: Option<String>,
     password_file: Option<PathBuf>,
 ) -> anyhow::Result<()> {
@@ -137,21 +145,58 @@ fn vault_encrypt(
     };
     let pass = get_password(password, pass_file)?;
     read_process_write(file_input, file_output, |cipher_package| {
-        thevault::encrypt(
+        let ciphertext = thevault::encrypt(
             SecStr::from(pass.clone()),
             SecVec::new(cipher_package.to_vec()),
-        )
+        );
+        Ok(ciphertext)
     })?;
     Ok(())
 }
 
 fn vault_view(
-    file_input: Option<PathBuf>,
-    file_output: Option<PathBuf>,
-    password: Option<String>,
-    password_file: Option<PathBuf>,
+    file_input: &Path,
+    password: Option<&str>,
+    password_file: Option<&Path>,
 ) -> anyhow::Result<()> {
+    let pass_file = match password_file {
+        Some(pf) => File::open(pf).ok(),
+        None => None,
+    };
+    let pass = get_password(password, pass_file)?;
+
+    let pager_cmd = env::var("THEVAULTPAGER").unwrap_or("less".to_string());
+    let pager = which(&pager_cmd).with_context(|| format!("no pager was found"))?;
+
+    let mut cipher_package: Vec<u8> = Vec::new();
+    File::open(file_input)
+        .with_context(|| format!("failed to open input file {}", file_input.to_str().unwrap()))?
+        .read_to_end(&mut cipher_package)?;
+
+    let plainbytes = thevault::decrypt(SecStr::from(pass.clone()), &cipher_package)?
+        .unsecure()
+        .to_vec();
+    let plaintext = String::from_utf8(plainbytes)?;
+
+    let mut pager_process = Command::new(pager)
+        .stdin(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("error while spawning pager {}", pager_cmd))?;
+
+    let pager_stdin = pager_process.stdin.as_mut().unwrap();
+    write!(pager_stdin, "{}", plaintext)?;
+    pager_process.wait()?;
     Ok(())
+}
+
+fn which(cmd: &str) -> anyhow::Result<String> {
+    let output = Command::new("which").arg(cmd).output()?;
+    if output.status.success() {
+        let path = String::from_utf8(output.stdout)?.trim().to_string();
+        return Ok(path);
+    }
+    let err = String::from_utf8(output.stderr)?;
+    Err(anyhow::anyhow!(err))
 }
 
 fn main() -> anyhow::Result<()> {
@@ -167,7 +212,11 @@ fn main() -> anyhow::Result<()> {
             password.as_deref(),
             password_file.as_deref(),
         ),
-        Opt::Edit { out } => Ok(()),
+        Opt::Edit {
+            file,
+            password,
+            password_file,
+        } => vault_edit(file, password, password_file),
         Opt::Encrypt {
             file,
             outfile,
@@ -179,7 +228,11 @@ fn main() -> anyhow::Result<()> {
             password.as_deref(),
             password_file.as_deref(),
         ),
-        Opt::View { file } => Ok(()),
+        Opt::View {
+            file,
+            password,
+            password_file,
+        } => vault_view(file.as_ref(), password.as_deref(), password_file.as_deref()),
     }
 }
 
@@ -226,7 +279,7 @@ mod tests {
             .stdout(Stdio::piped())
             .spawn()
             .expect("failed to spawn child process, try to run: cargo build --release");
-        let plaintext = b"Encrypt this text!";
+        let plaintext = r#"Encrypt this text!"#.as_bytes();
         {
             let stdin = encrypt_cmd.stdin.as_mut().expect("failed to open stdin");
             stdin
@@ -297,5 +350,14 @@ mod tests {
         let decrypted_text =
             fs::read_to_string(file_decrypted).expect("could not read from decrypted file");
         assert_eq!(decrypted_text, plaintext);
+    }
+
+    #[test]
+    fn which_less() {
+        assert!(which("less").unwrap_or("nope".into()).ends_with("/less"));
+        assert!(which("lesssss")
+            .unwrap_err()
+            .to_string()
+            .starts_with("which: no"));
     }
 }
