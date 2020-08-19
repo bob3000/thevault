@@ -1,0 +1,25 @@
+[package]
+authors = ["Robin Kautz <mail@bob3000.net>"]
+edition = "2018"
+name = "thevault"
+version = "0.1.0"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+aes = "0.5.0"
+anyhow = "1.0.32"
+base64 = "0.12.3"
+block-modes = "0.6.0"
+crypto-mac = {version = "0.8", features = ["std"]}
+hkdf = "0.9.0"
+hmac = "0.8.1"
+rand = "0.7.3"
+rpassword = "5.0.0"
+secstr = "0.4.0"
+sha2 = "0.9.1"
+structopt = "0.3.16"
+thiserror = "1.0.20"
+
+[dev-dependencies]
+tempfile = "3.1.0"
