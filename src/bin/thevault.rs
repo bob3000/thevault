@@ -19,6 +19,8 @@ enum Opt {
         password: Option<String>,
         #[structopt(long, short("w"), parse(from_os_str))]
         password_file: Option<PathBuf>,
+        #[structopt(long, short)]
+        inplace: bool,
     },
     Edit {
         #[structopt(long, short, parse(from_os_str))]
@@ -29,6 +31,8 @@ enum Opt {
         password: Option<String>,
         #[structopt(long, short("w"), parse(from_os_str))]
         password_file: Option<PathBuf>,
+        #[structopt(long, short)]
+        inplace: bool,
     },
     Encrypt {
         #[structopt(long, short, parse(from_os_str))]
@@ -39,6 +43,8 @@ enum Opt {
         password: Option<String>,
         #[structopt(long, short("w"), parse(from_os_str))]
         password_file: Option<PathBuf>,
+        #[structopt(long, short)]
+        inplace: bool,
     },
     View {
         #[structopt(long, short, parse(from_os_str))]
@@ -78,11 +84,13 @@ fn get_password(password: Option<&str>, password_file: Option<File>) -> anyhow::
 fn read_process_write<F>(
     file: Option<&Path>,
     outfile: Option<&Path>,
+    inplace: bool,
     mut fn_process: F,
 ) -> anyhow::Result<()>
 where
     F: FnMut(&Vec<u8>) -> anyhow::Result<Vec<u8>>,
 {
+    let do_inplace = if file == outfile { true } else { inplace };
     let mut buf: Vec<u8> = Vec::new();
     match file {
         Some(path) => File::open(path.clone())
@@ -93,7 +101,7 @@ where
     };
     let processed = fn_process(&buf)?;
     match outfile {
-        Some(path) => {
+        Some(path) if !do_inplace => {
             let mut file = File::create(path.clone()).with_context(|| {
                 format!("failed to create output file {}", path.to_str().unwrap())
             })?;
@@ -101,8 +109,18 @@ where
             file.sync_all()?;
         }
         None => {
-            io::stdout().write_all(&processed)?;
+            if do_inplace && file.is_some() {
+                let path = file.unwrap();
+                let mut file = File::create(path.clone()).with_context(|| {
+                    format!("failed to create output file {}", path.to_str().unwrap())
+                })?;
+                file.write_all(&processed)?;
+                file.sync_all()?;
+            } else {
+                io::stdout().write_all(&processed)?;
+            }
         }
+        _ => {}
     };
     Ok(())
 }
@@ -112,13 +130,14 @@ fn vault_decrypt(
     file_output: Option<&Path>,
     password: Option<&str>,
     password_file: Option<&Path>,
+    inplace: bool,
 ) -> anyhow::Result<()> {
     let pass_file = match password_file {
         Some(pf) => File::open(pf).ok(),
         None => None,
     };
     let pass = get_password(password, pass_file)?;
-    read_process_write(file_input, file_output, |cipher_package| {
+    read_process_write(file_input, file_output, inplace, |cipher_package| {
         let plaintext = thevault::decrypt(SecStr::from(pass.clone()), cipher_package)?
             .unsecure()
             .to_vec();
@@ -132,13 +151,14 @@ fn vault_edit(
     file_output: Option<&Path>,
     password: Option<&str>,
     password_file: Option<&Path>,
+    inplace: bool,
 ) -> anyhow::Result<()> {
     let pass_file = match password_file {
         Some(pf) => File::open(pf).ok(),
         None => None,
     };
     let pass = get_password(password, pass_file)?;
-    read_process_write(file_input, file_output, |cipher_package| {
+    read_process_write(file_input, file_output, inplace, |cipher_package| {
         let plaintext = thevault::decrypt(SecStr::from(pass.clone()), cipher_package)?
             .unsecure()
             .to_vec();
@@ -174,13 +194,14 @@ fn vault_encrypt(
     file_output: Option<&Path>,
     password: Option<&str>,
     password_file: Option<&Path>,
+    inplace: bool,
 ) -> anyhow::Result<()> {
     let pass_file = match password_file {
         Some(pf) => File::open(pf).ok(),
         None => None,
     };
     let pass = get_password(password, pass_file)?;
-    read_process_write(file_input, file_output, |cipher_package| {
+    read_process_write(file_input, file_output, inplace, |cipher_package| {
         let ciphertext = thevault::encrypt(
             SecStr::from(pass.clone()),
             SecVec::new(cipher_package.to_vec()),
@@ -200,28 +221,25 @@ fn vault_view(
         None => None,
     };
     let pass = get_password(password, pass_file)?;
+    read_process_write(Some(file_input), None, false, |cipher_package| {
+        let plain_bytes = thevault::decrypt(SecStr::from(pass.clone()), cipher_package)?
+            .unsecure()
+            .to_vec();
+        let plaintext = String::from_utf8(plain_bytes)?;
 
-    let pager_cmd = env::var("PAGER").unwrap_or("less".to_string());
-    let pager = which(&pager_cmd).with_context(|| format!("no pager was found"))?;
+        let pager_cmd = env::var("PAGER").unwrap_or("less".to_string());
+        let pager = which(&pager_cmd).with_context(|| format!("no pager was found"))?;
 
-    let mut cipher_package: Vec<u8> = Vec::new();
-    File::open(file_input)
-        .with_context(|| format!("failed to open input file {}", file_input.to_str().unwrap()))?
-        .read_to_end(&mut cipher_package)?;
+        let mut pager_process = Command::new(pager)
+            .stdin(Stdio::piped())
+            .spawn()
+            .with_context(|| format!("error while spawning pager {}", pager_cmd))?;
 
-    let plainbytes = thevault::decrypt(SecStr::from(pass.clone()), &cipher_package)?
-        .unsecure()
-        .to_vec();
-    let plaintext = String::from_utf8(plainbytes)?;
-
-    let mut pager_process = Command::new(pager)
-        .stdin(Stdio::piped())
-        .spawn()
-        .with_context(|| format!("error while spawning pager {}", pager_cmd))?;
-
-    let pager_stdin = pager_process.stdin.as_mut().unwrap();
-    write!(pager_stdin, "{}", plaintext)?;
-    pager_process.wait()?;
+        let pager_stdin = pager_process.stdin.as_mut().unwrap();
+        write!(pager_stdin, "{}", plaintext)?;
+        pager_process.wait()?;
+        Ok("".as_bytes().to_vec())
+    })?;
     Ok(())
 }
 
@@ -242,33 +260,39 @@ fn main() -> anyhow::Result<()> {
             outfile,
             password,
             password_file,
+            inplace,
         } => vault_decrypt(
             file.as_deref(),
             outfile.as_deref(),
             password.as_deref(),
             password_file.as_deref(),
+            inplace,
         ),
         Opt::Edit {
             file,
             outfile,
             password,
             password_file,
+            inplace,
         } => vault_edit(
             file.as_deref(),
             outfile.as_deref(),
             password.as_deref(),
             password_file.as_deref(),
+            inplace,
         ),
         Opt::Encrypt {
             file,
             outfile,
             password,
             password_file,
+            inplace,
         } => vault_encrypt(
             file.as_deref(),
             outfile.as_deref(),
             password.as_deref(),
             password_file.as_deref(),
+            inplace,
         ),
         Opt::View {
             file,
@@ -375,6 +399,7 @@ mod tests {
             Some(file_output.path()),
             Some(password),
             None,
+            false,
         )
         .expect("error vault encryption");
 
@@ -387,6 +412,7 @@ mod tests {
             Some(file_decrypted.path()),
             Some(password),
             None,
+            false,
         )
         .expect("error vault encryption");
 
