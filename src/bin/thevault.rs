@@ -5,7 +5,7 @@ use std::fs::File;
 use std::io;
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
-use std::process::{self, Command, Stdio};
+use std::process::{Command, Stdio};
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -23,6 +23,8 @@ enum Opt {
     Edit {
         #[structopt(long, short, parse(from_os_str))]
         file: Option<PathBuf>,
+        #[structopt(long, short, parse(from_os_str))]
+        outfile: Option<PathBuf>,
         #[structopt(long, short)]
         password: Option<String>,
         #[structopt(long, short("w"), parse(from_os_str))]
@@ -126,10 +128,44 @@ fn vault_decrypt(
 }
 
 fn vault_edit(
-    file_input: Option<PathBuf>,
-    password: Option<String>,
-    password_file: Option<PathBuf>,
+    file_input: Option<&Path>,
+    file_output: Option<&Path>,
+    password: Option<&str>,
+    password_file: Option<&Path>,
 ) -> anyhow::Result<()> {
+    let pass_file = match password_file {
+        Some(pf) => File::open(pf).ok(),
+        None => None,
+    };
+    let pass = get_password(password, pass_file)?;
+    read_process_write(file_input, file_output, |cipher_package| {
+        let plaintext = thevault::decrypt(SecStr::from(pass.clone()), cipher_package)?
+            .unsecure()
+            .to_vec();
+
+        let editor_cmd = env::var("EDITOR").unwrap_or("less".to_string());
+        let editor = which(&editor_cmd).with_context(|| format!("no pager was found"))?;
+
+        let mut tmp_file = tempfile::NamedTempFile::new()?;
+        tmp_file.write_all(&plaintext)?;
+
+        let mut editor_process = Command::new(editor)
+            .arg(tmp_file.path())
+            .spawn()
+            .with_context(|| format!("error while spawning pager {}", editor_cmd))?;
+        editor_process.wait()?;
+
+        let mut changed_text: Vec<u8> = Vec::new();
+        tmp_file.reopen()?.read_to_end(&mut changed_text)?;
+
+        let cipher_package = thevault::encrypt(
+            SecStr::from(pass.clone()),
+            SecVec::from(changed_text.to_vec()),
+        );
+        drop(tmp_file);
+
+        Ok(cipher_package)
+    })?;
     Ok(())
 }
 
@@ -165,7 +201,7 @@ fn vault_view(
     };
     let pass = get_password(password, pass_file)?;
 
-    let pager_cmd = env::var("THEVAULTPAGER").unwrap_or("less".to_string());
+    let pager_cmd = env::var("PAGER").unwrap_or("less".to_string());
     let pager = which(&pager_cmd).with_context(|| format!("no pager was found"))?;
 
     let mut cipher_package: Vec<u8> = Vec::new();
@@ -214,9 +250,15 @@ fn main() -> anyhow::Result<()> {
         ),
         Opt::Edit {
             file,
+            outfile,
             password,
             password_file,
-        } => vault_edit(file, password, password_file),
+        } => vault_edit(
+            file.as_deref(),
+            outfile.as_deref(),
+            password.as_deref(),
+            password_file.as_deref(),
+        ),
         Opt::Encrypt {
             file,
             outfile,
@@ -236,6 +278,7 @@ fn main() -> anyhow::Result<()> {
     }
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;

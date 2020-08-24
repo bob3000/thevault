@@ -79,7 +79,7 @@ pub enum DecryptionError {
     InvalidCipherLength,
     #[error("HMAC verification failed")]
     HmacVerificationFailure(#[from] MacError),
-    #[error("Impropper key length")]
+    #[error("Improper key length")]
     KeyError(#[from] InvalidKeyIvLength),
     #[error("base64 decoding error")]
     Base64Error(#[from] DecodeError),
