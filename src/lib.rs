@@ -1,3 +1,9 @@
+/*!
+
+This library is made to encrypt data and is build upon the libraries from the
+rust crypto project.
+
+*/
 use aes::Aes256;
 use base64::DecodeError;
 use block_modes::block_padding::Iso7816;

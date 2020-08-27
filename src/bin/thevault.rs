@@ -8,54 +8,14 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use structopt::StructOpt;
 
-#[derive(Debug, StructOpt)]
-enum Opt {
-    Decrypt {
-        #[structopt(long, short, parse(from_os_str))]
-        file: Option<PathBuf>,
-        #[structopt(long, short, parse(from_os_str))]
-        outfile: Option<PathBuf>,
-        #[structopt(long, short)]
-        password: Option<String>,
-        #[structopt(long, short("w"), parse(from_os_str))]
-        password_file: Option<PathBuf>,
-        #[structopt(long, short)]
-        inplace: bool,
-    },
-    Edit {
-        #[structopt(long, short, parse(from_os_str))]
-        file: Option<PathBuf>,
-        #[structopt(long, short, parse(from_os_str))]
-        outfile: Option<PathBuf>,
-        #[structopt(long, short)]
-        password: Option<String>,
-        #[structopt(long, short("w"), parse(from_os_str))]
-        password_file: Option<PathBuf>,
-        #[structopt(long, short)]
-        inplace: bool,
-    },
-    Encrypt {
-        #[structopt(long, short, parse(from_os_str))]
-        file: Option<PathBuf>,
-        #[structopt(long, short, parse(from_os_str))]
-        outfile: Option<PathBuf>,
-        #[structopt(long, short)]
-        password: Option<String>,
-        #[structopt(long, short("w"), parse(from_os_str))]
-        password_file: Option<PathBuf>,
-        #[structopt(long, short)]
-        inplace: bool,
-    },
-    View {
-        #[structopt(long, short, parse(from_os_str))]
-        file: PathBuf,
-        #[structopt(long, short)]
-        password: Option<String>,
-        #[structopt(long, short("w"), parse(from_os_str))]
-        password_file: Option<PathBuf>,
-    },
-}
+// helper functions
 
+// This function is searches for the encryption / decryption password on
+// different places in the following order:
+// 1. command line argument
+// 2. environ variable
+// 3. password file
+// 4. read from TTY
 fn get_password(password: Option<&str>, password_file: Option<File>) -> anyhow::Result<String> {
     // First option - user entered a password as a command line option
     if password.is_some() {
@@ -81,6 +41,11 @@ fn get_password(password: Option<&str>, password_file: Option<File>) -> anyhow::
     Ok(pass)
 }
 
+// Basically all functionality of the program requires three steps
+// 1. reading from a file or stdin
+// 2. apply a function on the data (encrypt or decrypt)
+// 3. write to a file or stdout
+// This function encapsulates this reoccurring procedure
 fn read_process_write<F>(
     file: Option<&Path>,
     outfile: Option<&Path>,
@@ -90,6 +55,7 @@ fn read_process_write<F>(
 where
     F: FnMut(&Vec<u8>) -> anyhow::Result<Vec<u8>>,
 {
+    // read data
     let do_inplace = if file == outfile { true } else { inplace };
     let mut buf: Vec<u8> = Vec::new();
     match file {
@@ -99,7 +65,11 @@ where
             .unwrap(),
         None => io::stdin().read_to_end(&mut buf).unwrap(),
     };
+
+    // apply function
     let processed = fn_process(&buf)?;
+
+    // write data
     match outfile {
         Some(path) if !do_inplace => {
             let mut file = File::create(path.clone()).with_context(|| {
@@ -125,6 +95,19 @@ where
     Ok(())
 }
 
+// Look up if an external command is available and if yes return it's full path
+fn which(cmd: &str) -> anyhow::Result<String> {
+    let output = Command::new("which").arg(cmd).output()?;
+    if output.status.success() {
+        let path = String::from_utf8(output.stdout)?.trim().to_string();
+        return Ok(path);
+    }
+    let err = String::from_utf8(output.stderr)?;
+    Err(anyhow::anyhow!(err))
+}
+
+
+// sub commands
 fn vault_decrypt(
     file_input: Option<&Path>,
     file_output: Option<&Path>,
@@ -243,14 +226,53 @@ fn vault_view(
     Ok(())
 }
 
-fn which(cmd: &str) -> anyhow::Result<String> {
-    let output = Command::new("which").arg(cmd).output()?;
-    if output.status.success() {
-        let path = String::from_utf8(output.stdout)?.trim().to_string();
-        return Ok(path);
-    }
-    let err = String::from_utf8(output.stderr)?;
-    Err(anyhow::anyhow!(err))
+// command line interface
+#[derive(Debug, StructOpt)]
+enum Opt {
+    Decrypt {
+        #[structopt(long, short, parse(from_os_str))]
+        file: Option<PathBuf>,
+        #[structopt(long, short, parse(from_os_str))]
+        outfile: Option<PathBuf>,
+        #[structopt(long, short)]
+        password: Option<String>,
+        #[structopt(long, short("w"), parse(from_os_str))]
+        password_file: Option<PathBuf>,
+        #[structopt(long, short)]
+        inplace: bool,
+    },
+    Edit {
+        #[structopt(long, short, parse(from_os_str))]
+        file: Option<PathBuf>,
+        #[structopt(long, short, parse(from_os_str))]
+        outfile: Option<PathBuf>,
+        #[structopt(long, short)]
+        password: Option<String>,
+        #[structopt(long, short("w"), parse(from_os_str))]
+        password_file: Option<PathBuf>,
+        #[structopt(long, short)]
+        inplace: bool,
+    },
+    Encrypt {
+        #[structopt(long, short, parse(from_os_str))]
+        file: Option<PathBuf>,
+        #[structopt(long, short, parse(from_os_str))]
+        outfile: Option<PathBuf>,
+        #[structopt(long, short)]
+        password: Option<String>,
+        #[structopt(long, short("w"), parse(from_os_str))]
+        password_file: Option<PathBuf>,
+        #[structopt(long, short)]
+        inplace: bool,
+    },
+    View {
+        #[structopt(long, short, parse(from_os_str))]
+        file: PathBuf,
+        #[structopt(long, short)]
+        password: Option<String>,
+        #[structopt(long, short("w"), parse(from_os_str))]
+        password_file: Option<PathBuf>,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
