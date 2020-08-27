@@ -16,7 +16,7 @@ use structopt::StructOpt;
 // 2. environ variable
 // 3. password file
 // 4. read from TTY
-fn get_password(password: Option<&str>, password_file: Option<File>) -> anyhow::Result<String> {
+fn get_password(password: Option<&str>, password_file: Option<&Path>) -> anyhow::Result<String> {
     // First option - user entered a password as a command line option
     if password.is_some() {
         return Ok(password.unwrap().to_string());
@@ -31,8 +31,9 @@ fn get_password(password: Option<&str>, password_file: Option<File>) -> anyhow::
     // Third option - user provided a password file
     let mut pass = String::new();
     match password_file {
-        Some(mut pf) => {
-            pf.read_to_string(&mut pass)?;
+        Some(pf) => {
+            let mut pass_file = File::open(pf)?;
+            pass_file.read_to_string(&mut pass)?;
         }
         None => {
             pass = rpassword::read_password_from_tty(Some("Password: "))?;
@@ -106,7 +107,6 @@ fn which(cmd: &str) -> anyhow::Result<String> {
     Err(anyhow::anyhow!(err))
 }
 
-
 // sub commands
 fn vault_decrypt(
     file_input: Option<&Path>,
@@ -115,11 +115,7 @@ fn vault_decrypt(
     password_file: Option<&Path>,
     inplace: bool,
 ) -> anyhow::Result<()> {
-    let pass_file = match password_file {
-        Some(pf) => File::open(pf).ok(),
-        None => None,
-    };
-    let pass = get_password(password, pass_file)?;
+    let pass = get_password(password, password_file)?;
     read_process_write(file_input, file_output, inplace, |cipher_package| {
         let plaintext = thevault::decrypt(SecStr::from(pass.clone()), cipher_package)?
             .unsecure()
@@ -136,11 +132,7 @@ fn vault_edit(
     password_file: Option<&Path>,
     inplace: bool,
 ) -> anyhow::Result<()> {
-    let pass_file = match password_file {
-        Some(pf) => File::open(pf).ok(),
-        None => None,
-    };
-    let pass = get_password(password, pass_file)?;
+    let pass = get_password(password, password_file)?;
     read_process_write(file_input, file_output, inplace, |cipher_package| {
         let plaintext = thevault::decrypt(SecStr::from(pass.clone()), cipher_package)?
             .unsecure()
@@ -179,11 +171,7 @@ fn vault_encrypt(
     password_file: Option<&Path>,
     inplace: bool,
 ) -> anyhow::Result<()> {
-    let pass_file = match password_file {
-        Some(pf) => File::open(pf).ok(),
-        None => None,
-    };
-    let pass = get_password(password, pass_file)?;
+    let pass = get_password(password, password_file)?;
     read_process_write(file_input, file_output, inplace, |cipher_package| {
         let ciphertext = thevault::encrypt(
             SecStr::from(pass.clone()),
@@ -199,11 +187,7 @@ fn vault_view(
     password: Option<&str>,
     password_file: Option<&Path>,
 ) -> anyhow::Result<()> {
-    let pass_file = match password_file {
-        Some(pf) => File::open(pf).ok(),
-        None => None,
-    };
-    let pass = get_password(password, pass_file)?;
+    let pass = get_password(password, password_file)?;
     read_process_write(Some(file_input), None, false, |cipher_package| {
         let plain_bytes = thevault::decrypt(SecStr::from(pass.clone()), cipher_package)?
             .unsecure()
@@ -339,10 +323,10 @@ mod tests {
 
     #[test]
     fn password_from_file() {
-        let mut tmp_file = tempfile::tempfile().expect("could not create temp file");
+        let mut tmp_file = tempfile::NamedTempFile::new().expect("could not create temp file");
         write!(tmp_file, "password").expect("could not write to temp file");
         tmp_file.seek(SeekFrom::Start(0)).unwrap();
-        let pw = get_password(None, Some(tmp_file)).unwrap();
+        let pw = get_password(None, Some(tmp_file.path())).unwrap();
         assert_eq!(pw, "password");
     }
 
