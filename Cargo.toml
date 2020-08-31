@@ -1,6 +1,8 @@
 [package]
-authors = ["Robin Kautz <mail@bob3000.net>"]
+authors = ["Robin Kautz <ospbkof0a@relay.firefox.com>"]
+description = "A symetric file encryption utility for the command line."
 edition = "2018"
+license = "MIT"
 name = "thevault"
 version = "0.1.0"
 
@@ -19,8 +21,8 @@ rpassword = "5.0.0"
 secstr = "0.4.0"
 sha2 = "0.9.1"
 structopt = "0.3.16"
-thiserror = "1.0.20"
 tempfile = "3.1.0"
+thiserror = "1.0.20"
 
 [dev-dependencies]
 tempfile = "3.1.0"
