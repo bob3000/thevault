@@ -12,6 +12,28 @@ encryption using passwords. All cryptographic actions rely on libraries from the
 - read password from password file, environment variable, command line parameter
   or stdin
 
+Available sub commands
+
+```sh
+thevault 0.1.0
+
+USAGE:
+    thevault <SUBCOMMAND>
+
+FLAGS:
+    -h, --help       Prints help information
+    -V, --version    Prints version information
+
+SUBCOMMANDS:
+    decrypt
+    edit
+    encrypt
+    help       Prints this message or the help of the given subcommand(s)
+    view
+```
+
+Available options and flags
+
 ```sh
 thevault-encrypt 0.1.0
 
