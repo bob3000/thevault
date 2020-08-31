@@ -1,9 +1,14 @@
 [package]
 authors = ["Robin Kautz <ospbkof0a@relay.firefox.com>"]
+categories = ["command-line-utilities", "cryptography"]
 description = "A symetric file encryption utility for the command line."
 edition = "2018"
+homepage = "https://github.com/bob3000/thevault"
+keywords = ["commadline", "encryption", "aes", "password", "vault"]
 license = "MIT"
 name = "thevault"
+readme = "README.md"
+repository = "https://github.com/bob3000/thevault"
 version = "0.1.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
