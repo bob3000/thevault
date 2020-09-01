@@ -16,6 +16,7 @@ Available sub commands
 
 ```sh
 thevault 0.1.0
+A file encryption utility
 
 USAGE:
     thevault <SUBCOMMAND>
@@ -25,31 +26,34 @@ FLAGS:
     -V, --version    Prints version information
 
 SUBCOMMANDS:
-    decrypt
-    edit
-    encrypt
+    decrypt    Decrypts a message to a file or stdout
+    edit       Opens an encrypted file in the default editor
+    encrypt    Encrypts a message from a file or stdin
     help       Prints this message or the help of the given subcommand(s)
-    view
+    view       Opens an encrypted file in the default pager
+
 ```
 
 Available options and flags
 
 ```sh
 thevault-encrypt 0.1.0
+Encrypts a message from a file or stdin
 
 USAGE:
     thevault encrypt [FLAGS] [OPTIONS]
 
 FLAGS:
     -h, --help       Prints help information
-    -i, --inplace
+    -i, --inplace    Wether to write to encrypted message to the source file
     -V, --version    Prints version information
 
 OPTIONS:
-    -f, --file <file>
-    -o, --outfile <outfile>
-    -p, --password <password>
-    -w, --password-file <password-file>
+    -f, --file <file>                      File to encrypt [default: stdin]
+    -o, --outfile <outfile>                Destination file [default: stdout]
+    -p, --password <password>              Encryption password [default: stdin] [env: THEVAULTPASS]
+    -w, --password-file <password-file>    Path to file storing the encryption password
+
 ```
 
 ## Installation

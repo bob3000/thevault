@@ -12,7 +12,7 @@ use structopt::StructOpt;
 
 // This function is searches for the encryption / decryption password on
 // different places in the following order:
-// 1. command line argument
+// 1. command line argument or environment variable
 // 2. password file
 // 3. read from TTY
 fn get_password(password: Option<&str>, password_file: Option<&Path>) -> anyhow::Result<String> {
@@ -119,14 +119,12 @@ fn vault_decrypt(
 }
 
 fn vault_edit(
-    file_input: Option<&Path>,
-    file_output: Option<&Path>,
+    file_input: &Path,
     password: Option<&str>,
     password_file: Option<&Path>,
-    inplace: bool,
 ) -> anyhow::Result<()> {
     let pass = get_password(password, password_file)?;
-    read_process_write(file_input, file_output, inplace, |cipher_package| {
+    read_process_write(Some(file_input), None, true, |cipher_package| {
         let plaintext = thevault::decrypt(SecStr::from(pass.clone()), cipher_package)?
             .unsecure()
             .to_vec();
@@ -205,50 +203,122 @@ fn vault_view(
 
 // command line interface
 #[derive(Debug, StructOpt)]
-#[structopt(name = "thevault", about = "a file encryption utility")]
+#[structopt(name = "thevault", about = "A file encryption utility")]
 enum Opt {
+    /// Decrypts a message to a file or stdout
     Decrypt {
-        #[structopt(long, short, parse(from_os_str))]
+        #[structopt(
+            long,
+            short,
+            parse(from_os_str),
+            help = "File to decrypt [default: stdin]"
+        )]
         file: Option<PathBuf>,
-        #[structopt(long, short, parse(from_os_str))]
+        #[structopt(
+            long,
+            short,
+            parse(from_os_str),
+            help = "Destination file [default: stdout]"
+        )]
         outfile: Option<PathBuf>,
-        #[structopt(long, short, env = "THEVAULTPASS", hide_env_values = true)]
+        #[structopt(
+            long,
+            short,
+            env = "THEVAULTPASS",
+            hide_env_values = true,
+            help = "Decryption password [default: stdin]"
+        )]
         password: Option<String>,
-        #[structopt(long, short("w"), parse(from_os_str))]
+        #[structopt(
+            long,
+            short("w"),
+            parse(from_os_str),
+            help = "Path to file storing the decryption password"
+        )]
         password_file: Option<PathBuf>,
-        #[structopt(long, short)]
+        #[structopt(
+            long,
+            short,
+            help = "Wether to write to encrypted message to the source file"
+        )]
         inplace: bool,
     },
+    /// Opens an encrypted file in the default editor
     Edit {
-        #[structopt(long, short, parse(from_os_str))]
-        file: Option<PathBuf>,
-        #[structopt(long, short, parse(from_os_str))]
-        outfile: Option<PathBuf>,
-        #[structopt(long, short, env = "THEVAULTPASS", hide_env_values = true)]
-        password: Option<String>,
-        #[structopt(long, short("w"), parse(from_os_str))]
-        password_file: Option<PathBuf>,
-        #[structopt(long, short)]
-        inplace: bool,
-    },
-    Encrypt {
-        #[structopt(long, short, parse(from_os_str))]
-        file: Option<PathBuf>,
-        #[structopt(long, short, parse(from_os_str))]
-        outfile: Option<PathBuf>,
-        #[structopt(long, short, env = "THEVAULTPASS", hide_env_values = true)]
-        password: Option<String>,
-        #[structopt(long, short("w"), parse(from_os_str))]
-        password_file: Option<PathBuf>,
-        #[structopt(long, short)]
-        inplace: bool,
-    },
-    View {
-        #[structopt(long, short, parse(from_os_str))]
+        #[structopt(long, short, parse(from_os_str), help = "File to edit")]
         file: PathBuf,
-        #[structopt(long, short, env = "THEVAULTPASS", hide_env_values = true)]
+        #[structopt(
+            long,
+            short,
+            env = "THEVAULTPASS",
+            hide_env_values = true,
+            help = "Decryption password [default: stdin]"
+        )]
         password: Option<String>,
-        #[structopt(long, short("w"), parse(from_os_str))]
+        #[structopt(
+            long,
+            short("w"),
+            parse(from_os_str),
+            help = "Path to file storing the decryption password"
+        )]
+        password_file: Option<PathBuf>,
+    },
+    /// Encrypts a message from a file or stdin
+    Encrypt {
+        #[structopt(
+            long,
+            short,
+            parse(from_os_str),
+            help = "File to encrypt [default: stdin]"
+        )]
+        file: Option<PathBuf>,
+        #[structopt(
+            long,
+            short,
+            parse(from_os_str),
+            help = "Destination file [default: stdout]"
+        )]
+        outfile: Option<PathBuf>,
+        #[structopt(
+            long,
+            short,
+            env = "THEVAULTPASS",
+            hide_env_values = true,
+            help = "Encryption password [default: stdin]"
+        )]
+        password: Option<String>,
+        #[structopt(
+            long,
+            short("w"),
+            parse(from_os_str),
+            help = "Path to file storing the encryption password"
+        )]
+        password_file: Option<PathBuf>,
+        #[structopt(
+            long,
+            short,
+            help = "Wether to write to encrypted message to the source file"
+        )]
+        inplace: bool,
+    },
+    /// Opens an encrypted file in the default pager
+    View {
+        #[structopt(long, short, parse(from_os_str), help = "File to view")]
+        file: PathBuf,
+        #[structopt(
+            long,
+            short,
+            env = "THEVAULTPASS",
+            hide_env_values = true,
+            help = "Decryption password [default: stdin]"
+        )]
+        password: Option<String>,
+        #[structopt(
+            long,
+            short("w"),
+            parse(from_os_str),
+            help = "Path to file storing the decryption password"
+        )]
         password_file: Option<PathBuf>,
     },
 }
@@ -270,17 +340,9 @@ fn main() -> anyhow::Result<()> {
         ),
         Opt::Edit {
             file,
-            outfile,
             password,
             password_file,
-            inplace,
-        } => vault_edit(
-            file.as_deref(),
-            outfile.as_deref(),
-            password.as_deref(),
-            password_file.as_deref(),
-            inplace,
-        ),
+        } => vault_edit(file.as_ref(), password.as_deref(), password_file.as_deref()),
         Opt::Encrypt {
             file,
             outfile,
