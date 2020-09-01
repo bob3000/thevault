@@ -13,22 +13,15 @@ use structopt::StructOpt;
 // This function is searches for the encryption / decryption password on
 // different places in the following order:
 // 1. command line argument
-// 2. environ variable
-// 3. password file
-// 4. read from TTY
+// 2. password file
+// 3. read from TTY
 fn get_password(password: Option<&str>, password_file: Option<&Path>) -> anyhow::Result<String> {
     // First option - user entered a password as a command line option
     if password.is_some() {
         return Ok(password.unwrap().to_string());
     };
 
-    // Second option - user set an environment variable
-    let env_var_name = "THEVAULTPASS";
-    if env::var(env_var_name).is_ok() {
-        return Ok(env::var(env_var_name).unwrap().to_owned());
-    }
-
-    // Third option - user provided a password file
+    // Second option - user provided a password file
     let mut pass = String::new();
     match password_file {
         Some(pf) => {
@@ -212,13 +205,14 @@ fn vault_view(
 
 // command line interface
 #[derive(Debug, StructOpt)]
+#[structopt(name = "thevault", about = "a file encryption utility")]
 enum Opt {
     Decrypt {
         #[structopt(long, short, parse(from_os_str))]
         file: Option<PathBuf>,
         #[structopt(long, short, parse(from_os_str))]
         outfile: Option<PathBuf>,
-        #[structopt(long, short)]
+        #[structopt(long, short, env = "THEVAULTPASS", hide_env_values = true)]
         password: Option<String>,
         #[structopt(long, short("w"), parse(from_os_str))]
         password_file: Option<PathBuf>,
@@ -230,7 +224,7 @@ enum Opt {
         file: Option<PathBuf>,
         #[structopt(long, short, parse(from_os_str))]
         outfile: Option<PathBuf>,
-        #[structopt(long, short)]
+        #[structopt(long, short, env = "THEVAULTPASS", hide_env_values = true)]
         password: Option<String>,
         #[structopt(long, short("w"), parse(from_os_str))]
         password_file: Option<PathBuf>,
@@ -242,7 +236,7 @@ enum Opt {
         file: Option<PathBuf>,
         #[structopt(long, short, parse(from_os_str))]
         outfile: Option<PathBuf>,
-        #[structopt(long, short)]
+        #[structopt(long, short, env = "THEVAULTPASS", hide_env_values = true)]
         password: Option<String>,
         #[structopt(long, short("w"), parse(from_os_str))]
         password_file: Option<PathBuf>,
@@ -252,7 +246,7 @@ enum Opt {
     View {
         #[structopt(long, short, parse(from_os_str))]
         file: PathBuf,
-        #[structopt(long, short)]
+        #[structopt(long, short, env = "THEVAULTPASS", hide_env_values = true)]
         password: Option<String>,
         #[structopt(long, short("w"), parse(from_os_str))]
         password_file: Option<PathBuf>,
@@ -327,19 +321,6 @@ mod tests {
         write!(tmp_file, "password").expect("could not write to temp file");
         tmp_file.seek(SeekFrom::Start(0)).unwrap();
         let pw = get_password(None, Some(tmp_file.path())).unwrap();
-        assert_eq!(pw, "password");
-    }
-
-    #[test]
-    fn password_from_env() {
-        env::set_var("THEVAULTPASS", "password");
-        let pw = get_password(None, None).unwrap();
-        assert_eq!(pw, "password");
-    }
-
-    #[test]
-    fn password_from_stdin() {
-        let pw = get_password(None, None).unwrap();
         assert_eq!(pw, "password");
     }
 
