@@ -53,7 +53,8 @@ OPTIONS:
     -f, --file <file>                      File to encrypt [default: stdin]
     -o, --outfile <outfile>                Destination file [default: stdout]
     -p, --password <password>              Encryption password [default: stdin] [env: THEVAULTPASS]
-    -w, --password-file <password-file>    Path to file storing the encryption password
+    -w, --password-file <password-file>    Path to file storing the encryption password [env:
+                                           THEVAULTPASSFILE=]
 
 ```
 
@@ -68,11 +69,12 @@ cargo install thevault
 
 ## Environment Variables
 
-| variable name  | purpose                                           | default value |
-| -------------- | ------------------------------------------------- | ------------- |
-| `EDITOR`       | the text editor to be used when editing the vault | vim           |
-| `PAGER`        | the pager to be used when viewing the vault       | less          |
-| `THEVAULTPASS` | the password used to encrypt / decrypt the vault  | `None`        |
+| variable name      | purpose                                                        | default value |
+| ------------------ | -------------------------------------------------------------- | ------------- |
+| `EDITOR`           | the text editor to be used when editing the vault              | vim           |
+| `PAGER`            | the pager to be used when viewing the vault                    | less          |
+| `THEVAULTPASS`     | the password used to encrypt / decrypt the vault               | `None`        |
+| `THEVAULTPASSFILE` | path to a file containing the encryption / decryption password | `None`        |
 
 ## Setting a password
 
