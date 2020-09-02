@@ -1,7 +1,7 @@
 use anyhow::Context;
 use secstr::{SecStr, SecVec};
 use std::env;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io;
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
@@ -49,43 +49,73 @@ fn read_process_write<F>(
 where
     F: FnMut(&Vec<u8>) -> anyhow::Result<Vec<u8>>,
 {
-    // read data
     let do_inplace = if file == outfile { true } else { inplace };
-    let mut buf: Vec<u8> = Vec::new();
-    match file {
-        Some(path) => File::open(path.clone())
-            .with_context(|| format!("failed to open input file {}", path.to_str().unwrap()))?
-            .read_to_end(&mut buf)
-            .unwrap(),
-        None => io::stdin().read_to_end(&mut buf).unwrap(),
+    // for inplace encryption we actually have to use a temporary file
+    let mut temporary_file: Option<PathBuf> = None;
+
+    // create the reader
+    let mut reader: Box<dyn Read> = match file {
+        // the reader is a file if a path is given
+        Some(path) => {
+            let f = File::open(path.clone())
+                .with_context(|| format!("failed to open input file {}", path.to_str().unwrap()))?;
+            Box::new(f)
+        }
+        // if no path is given the reader will be stdin
+        None => Box::new(io::stdin()),
     };
 
-    // apply function
-    let processed = fn_process(&buf)?;
-
-    // write data
-    match outfile {
+    // create the writer
+    let writer: Option<Box<dyn Write>> = match outfile {
+        // the writer is a new file if a path is given and we're not working inplace
         Some(path) if !do_inplace => {
-            let mut file = File::create(path.clone()).with_context(|| {
+            let f = File::create(path.clone()).with_context(|| {
                 format!("failed to create output file {}", path.to_str().unwrap())
             })?;
-            file.write_all(&processed)?;
-            file.sync_all()?;
+            Some(Box::new(f))
         }
         None => {
+            // if we're working inplace the writer is a new temporary file
             if do_inplace && file.is_some() {
-                let path = file.unwrap();
-                let mut file = File::create(path.clone()).with_context(|| {
-                    format!("failed to create output file {}", path.to_str().unwrap())
+                let mut tmp_file = file.unwrap().clone().to_owned();
+                tmp_file.set_extension("tmp");
+                let f = File::create(tmp_file.as_path()).with_context(|| {
+                    format!(
+                        "failed to create temporary file {}",
+                        tmp_file.as_path().to_str().unwrap()
+                    )
                 })?;
-                file.write_all(&processed)?;
-                file.sync_all()?;
+                temporary_file = Some(tmp_file);
+                Some(Box::new(f))
+            // if no path was given the writer is stdout
             } else {
-                io::stdout().write_all(&processed)?;
+                Some(Box::new(io::stdout()))
             }
         }
-        _ => {}
+        _ => None,
     };
+
+    // read the data
+    let mut read_buf: Vec<u8> = Vec::new();
+    reader.read_to_end(&mut read_buf)?;
+
+    // apply function
+    let processed = fn_process(&read_buf)?;
+
+    // write it back to the desired output
+    writer.unwrap().write_all(&processed)?;
+
+    // if a temporary file was used for an inplace operation we have to rename
+    // the temporary file to the actual input file
+    if temporary_file.is_some() && file.is_some() {
+        fs::rename(temporary_file.unwrap(), file.unwrap()).with_context(|| {
+            format!(
+                "failed to replace {} with temporary file",
+                file.unwrap().to_str().unwrap()
+            )
+        })?;
+    }
+
     Ok(())
 }
 
