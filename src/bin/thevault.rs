@@ -32,7 +32,7 @@ fn get_password(password: Option<&str>, password_file: Option<&Path>) -> anyhow:
             pass = rpassword::read_password_from_tty(Some("Password: "))?;
         }
     };
-    Ok(pass)
+    Ok(pass.trim().to_owned())
 }
 
 // Basically all functionality of the program requires three steps
@@ -232,6 +232,7 @@ enum Opt {
         #[structopt(
             long,
             short("w"),
+            env = "THEVAULTPASSFILE",
             parse(from_os_str),
             help = "Path to file storing the decryption password"
         )]
@@ -258,6 +259,7 @@ enum Opt {
         #[structopt(
             long,
             short("w"),
+            env = "THEVAULTPASSFILE",
             parse(from_os_str),
             help = "Path to file storing the decryption password"
         )]
@@ -290,6 +292,7 @@ enum Opt {
         #[structopt(
             long,
             short("w"),
+            env = "THEVAULTPASSFILE",
             parse(from_os_str),
             help = "Path to file storing the encryption password"
         )]
@@ -316,6 +319,7 @@ enum Opt {
         #[structopt(
             long,
             short("w"),
+            env = "THEVAULTPASSFILE",
             parse(from_os_str),
             help = "Path to file storing the decryption password"
         )]
