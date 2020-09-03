@@ -1,134 +1,172 @@
+/*!
+# The Vault
+
+The Vault is a command line file encryption tool. It performs symmetric AES
+encryption using passwords. All cryptographic actions rely on libraries from the
+[rust crypto](https://docs.rs/rust-crypto/0.2.36/crypto/) project.
+
+## Features
+
+- encrypt / decrypt a file inplace or to a different destination
+- view encrypted file
+- edit encrypted file
+- read password from password file, environment variable, command line parameter
+  or stdin
+
+Available sub commands
+
+```sh
+thevault 0.1.0
+A file encryption utility
+
+USAGE:
+    thevault <SUBCOMMAND>
+
+FLAGS:
+    -h, --help       Prints help information
+    -V, --version    Prints version information
+
+SUBCOMMANDS:
+    decrypt    Decrypts a message to a file or stdout
+    edit       Opens an encrypted file in the default editor
+    encrypt    Encrypts a message from a file or stdin
+    help       Prints this message or the help of the given subcommand(s)
+    view       Opens an encrypted file in the default pager
+
+```
+
+Available options and flags
+
+```sh
+thevault-encrypt 0.1.0
+Encrypts a message from a file or stdin
+
+USAGE:
+    thevault encrypt [FLAGS] [OPTIONS]
+
+FLAGS:
+    -h, --help       Prints help information
+    -i, --inplace    Wether to write to encrypted message to the source file
+    -V, --version    Prints version information
+
+OPTIONS:
+    -f, --file <file>                      File to encrypt [default: stdin]
+    -o, --outfile <outfile>                Destination file [default: stdout]
+    -p, --password <password>              Encryption password [default: stdin] [env: THEVAULTPASS]
+    -w, --password-file <password-file>    Path to file storing the encryption password [env:
+                                           THEVAULTPASSFILE=]
+
+```
+
+## Installation
+
+Currently the way to install The Vault is via Cargo. This might change in the
+future when I found the time to do the packaging.
+
+```sh
+cargo install thevault
+```
+
+## Environment Variables
+
+| variable name      | purpose                                                        | default value |
+| ------------------ | -------------------------------------------------------------- | ------------- |
+| `EDITOR`           | the text editor to be used when editing the vault              | vim           |
+| `PAGER`            | the pager to be used when viewing the vault                    | less          |
+| `THEVAULTPASS`     | the password used to encrypt / decrypt the vault               | `None`        |
+| `THEVAULTPASSFILE` | path to a file containing the encryption / decryption password | `None`        |
+
+## Setting a password
+
+When working with The Vault on a frequent basis it might become tedious to type
+the same password over and over again. There are several ways available to provide
+the password without repeatedly typing it.
+
+### A vault password file
+
+```sh
+echo mysecretpassword > ~/.thevaultpass  # Caution: the password ends up in the shell history
+chmod 600 ~/.thevaultpass
+thevault encrypt -i -w ~/.thevaultpass myprivatefile.txt
+thevault decrypt -i -w ~/.thevaultpass myprivatefile.txt
+```
+
+### An environment variable
+
+```sh
+export THEVAULTPASS=mysecretpassword  # Caution: the password ends up in the shell history
+thevault encrypt -i myprivatefile.txt
+thevault decrypt -i myprivatefile.txt
+```
+
+### Command line option
+
+```sh
+thevault encrypt -i -p mysecretpassword  myprivatefile.txt  # Caution: the password ends up in the shell history
+thevault decrypt -i -p mysecretpassword  myprivatefile.txt  # Caution: the password ends up in the shell history
+```
+
+## Examples
+
+### Read from _stdin_ and write to _stdout_
+
+```sh
+❯ cat <<END | thevault encrypt
+Beautiful is better than ugly.
+Explicit is better than implicit.
+Simple is better than complex.
+Complex is better than complicated.
+END
+Password:
+79QhinA1CXegm9pRPdlkIlVWrPcX4qYIkYlAsyl2Y6CVN2A21B726rhe8bVbBk+kcDyivl7DTnq+5oUaR3TkNM8N4j2+4OCKeuihnQ7Vtv4I3WJ4IQueUJvmsoBbxuCFHVoMqGkbIdehS3CVdvovACqCGlAvH39yxh61Ds1Dp1ND8Uzkhe9JlM5wicQyy2PgSRqSvie1W7Wq732oJ1Jp9Xo7wWOAMQInLGa8+9bzIADdzJWuyTynJYo4Jn38NhlflG7B2iZ/2d6Zz2SDwJkzIQ==%
+```
+
+### Encrypt a file inplace
+
+```sh
+❯ cat <<END > zen.aes
+Beautiful is better than ugly.
+Explicit is better than implicit.
+Simple is better than complex.
+Complex is better than complicated.
+END
+
+❯ thevault encrypt -i -f zen.aes
+Password:
+
+❯ cat zen.aes
+XHapWrX3GY0w7armyeN6deuASMvuAoUo+3D3njamKNq73s5kptnrwKvEfmVkvG4NDay+FTSAwDmYDFMKHpQBmnq0DPK84/pplnADK2Untfzizh9ykZxd/ZLk/yLve6x2zuExSR04Ww+itbYuk1kPGgyrCpsBFkxtI8TnRZxSzmzDzjHGus/H2Qa36F/gBRZS5inxqReCYkgLRKjree9+rP+Ms8XyLc0aJWI/FmD8cKQ71k+QeJ/4ch7pIFbQ4A+fCHqSJZju45IoJIoMHm6TEQ==%
+```
+
+### Decrypt a file to a different destination
+
+```sh
+❯ cat zen.aes
+XHapWrX3GY0w7armyeN6deuASMvuAoUo+3D3njamKNq73s5kptnrwKvEfmVkvG4NDay+FTSAwDmYDFMKHpQBmnq0DPK84/pplnADK2Untfzizh9ykZxd/ZLk/yLve6x2zuExSR04Ww+itbYuk1kPGgyrCpsBFkxtI8TnRZxSzmzDzjHGus/H2Qa36F/gBRZS5inxqReCYkgLRKjree9+rP+Ms8XyLc0aJWI/FmD8cKQ71k+QeJ/4ch7pIFbQ4A+fCHqSJZju45IoJIoMHm6TEQ==%
+
+❯ thevault decrypt -f zen.aes -o zen
+Password:
+
+❯ cat zen
+Beautiful is better than ugly.
+Explicit is better than implicit.
+Simple is better than complex.
+Complex is better than complicated.
+```
+*/
+
+mod crypto;
+mod helper;
+mod io;
 use anyhow::Context;
 use secstr::{SecStr, SecVec};
 use std::env;
-use std::fs::{self, File};
-use std::io;
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use structopt::StructOpt;
 
 // helper functions
-
-// This function is searches for the encryption / decryption password on
-// different places in the following order:
-// 1. command line argument or environment variable
-// 2. password file
-// 3. read from TTY
-fn get_password(password: Option<&str>, password_file: Option<&Path>) -> anyhow::Result<String> {
-    // First option - user entered a password as a command line option
-    if password.is_some() {
-        return Ok(password.unwrap().to_string());
-    };
-
-    // Second option - user provided a password file
-    let mut pass = String::new();
-    match password_file {
-        Some(pf) => {
-            let mut pass_file = File::open(pf)?;
-            pass_file.read_to_string(&mut pass)?;
-        }
-        None => {
-            pass = rpassword::read_password_from_tty(Some("Password: "))?;
-        }
-    };
-    Ok(pass.trim().to_owned())
-}
-
-// Basically all functionality of the program requires three steps
-// 1. reading from a file or stdin
-// 2. apply a function on the data (encrypt or decrypt)
-// 3. write to a file or stdout
-// This function encapsulates this reoccurring procedure
-fn read_process_write<F>(
-    file: Option<&Path>,
-    outfile: Option<&Path>,
-    inplace: bool,
-    mut fn_process: F,
-) -> anyhow::Result<()>
-where
-    F: FnMut(&Vec<u8>) -> anyhow::Result<Vec<u8>>,
-{
-    let do_inplace = if file == outfile { true } else { inplace };
-    // for inplace encryption we actually have to use a temporary file
-    let mut temporary_file: Option<PathBuf> = None;
-
-    // create the reader
-    let mut reader: Box<dyn Read> = match file {
-        // the reader is a file if a path is given
-        Some(path) => {
-            let f = File::open(path.clone())
-                .with_context(|| format!("failed to open input file {}", path.to_str().unwrap()))?;
-            Box::new(f)
-        }
-        // if no path is given the reader will be stdin
-        None => Box::new(io::stdin()),
-    };
-
-    // create the writer
-    let writer: Option<Box<dyn Write>> = match outfile {
-        // the writer is a new file if a path is given and we're not working inplace
-        Some(path) if !do_inplace => {
-            let f = File::create(path.clone()).with_context(|| {
-                format!("failed to create output file {}", path.to_str().unwrap())
-            })?;
-            Some(Box::new(f))
-        }
-        None => {
-            // if we're working inplace the writer is a new temporary file
-            if do_inplace && file.is_some() {
-                let mut tmp_file = file.unwrap().clone().to_owned();
-                tmp_file.set_extension("tmp");
-                let f = File::create(tmp_file.as_path()).with_context(|| {
-                    format!(
-                        "failed to create temporary file {}",
-                        tmp_file.as_path().to_str().unwrap()
-                    )
-                })?;
-                temporary_file = Some(tmp_file);
-                Some(Box::new(f))
-            // if no path was given the writer is stdout
-            } else {
-                Some(Box::new(io::stdout()))
-            }
-        }
-        _ => None,
-    };
-
-    // read the data
-    let mut read_buf: Vec<u8> = Vec::new();
-    reader.read_to_end(&mut read_buf)?;
-
-    // apply function
-    let processed = fn_process(&read_buf)?;
-
-    // write it back to the desired output
-    writer.unwrap().write_all(&processed)?;
-
-    // if a temporary file was used for an inplace operation we have to rename
-    // the temporary file to the actual input file
-    if temporary_file.is_some() && file.is_some() {
-        fs::rename(temporary_file.unwrap(), file.unwrap()).with_context(|| {
-            format!(
-                "failed to replace {} with temporary file",
-                file.unwrap().to_str().unwrap()
-            )
-        })?;
-    }
-
-    Ok(())
-}
-
-// Look up if an external command is available and if yes return it's full path
-fn which(cmd: &str) -> anyhow::Result<String> {
-    let output = Command::new("which").arg(cmd).output()?;
-    if output.status.success() {
-        let path = String::from_utf8(output.stdout)?.trim().to_string();
-        return Ok(path);
-    }
-    let err = String::from_utf8(output.stderr)?;
-    Err(anyhow::anyhow!(err))
-}
 
 // sub commands
 fn vault_decrypt(
@@ -138,9 +176,9 @@ fn vault_decrypt(
     password_file: Option<&Path>,
     inplace: bool,
 ) -> anyhow::Result<()> {
-    let pass = get_password(password, password_file)?;
-    read_process_write(file_input, file_output, inplace, |cipher_package| {
-        let plaintext = thevault::decrypt(SecStr::from(pass.clone()), cipher_package)?
+    let pass = helper::get_password(password, password_file)?;
+    io::read_process_write(file_input, file_output, inplace, |cipher_package| {
+        let plaintext = crypto::decrypt(SecStr::from(pass.clone()), cipher_package)?
             .unsecure()
             .to_vec();
         Ok(plaintext)
@@ -153,14 +191,14 @@ fn vault_edit(
     password: Option<&str>,
     password_file: Option<&Path>,
 ) -> anyhow::Result<()> {
-    let pass = get_password(password, password_file)?;
-    read_process_write(Some(file_input), None, true, |cipher_package| {
-        let plaintext = thevault::decrypt(SecStr::from(pass.clone()), cipher_package)?
+    let pass = helper::get_password(password, password_file)?;
+    io::read_process_write(Some(file_input), None, true, |cipher_package| {
+        let plaintext = crypto::decrypt(SecStr::from(pass.clone()), cipher_package)?
             .unsecure()
             .to_vec();
 
         let editor_cmd = env::var("EDITOR").unwrap_or("less".to_string());
-        let editor = which(&editor_cmd).with_context(|| format!("no pager was found"))?;
+        let editor = helper::which(&editor_cmd).with_context(|| format!("no pager was found"))?;
 
         let mut tmp_file = tempfile::NamedTempFile::new()?;
         tmp_file.write_all(&plaintext)?;
@@ -174,7 +212,7 @@ fn vault_edit(
         let mut changed_text: Vec<u8> = Vec::new();
         tmp_file.reopen()?.read_to_end(&mut changed_text)?;
 
-        let cipher_package = thevault::encrypt(
+        let cipher_package = crypto::encrypt(
             SecStr::from(pass.clone()),
             SecVec::from(changed_text.to_vec()),
         );
@@ -192,9 +230,9 @@ fn vault_encrypt(
     password_file: Option<&Path>,
     inplace: bool,
 ) -> anyhow::Result<()> {
-    let pass = get_password(password, password_file)?;
-    read_process_write(file_input, file_output, inplace, |cipher_package| {
-        let ciphertext = thevault::encrypt(
+    let pass = helper::get_password(password, password_file)?;
+    io::read_process_write(file_input, file_output, inplace, |cipher_package| {
+        let ciphertext = crypto::encrypt(
             SecStr::from(pass.clone()),
             SecVec::new(cipher_package.to_vec()),
         );
@@ -208,15 +246,15 @@ fn vault_view(
     password: Option<&str>,
     password_file: Option<&Path>,
 ) -> anyhow::Result<()> {
-    let pass = get_password(password, password_file)?;
-    read_process_write(Some(file_input), None, false, |cipher_package| {
-        let plain_bytes = thevault::decrypt(SecStr::from(pass.clone()), cipher_package)?
+    let pass = helper::get_password(password, password_file)?;
+    io::read_process_write(Some(file_input), None, false, |cipher_package| {
+        let plain_bytes = crypto::decrypt(SecStr::from(pass.clone()), cipher_package)?
             .unsecure()
             .to_vec();
         let plaintext = String::from_utf8(plain_bytes)?;
 
         let pager_cmd = env::var("PAGER").unwrap_or("less".to_string());
-        let pager = which(&pager_cmd).with_context(|| format!("no pager was found"))?;
+        let pager = helper::which(&pager_cmd).with_context(|| format!("no pager was found"))?;
 
         let mut pager_process = Command::new(pager)
             .stdin(Stdio::piped())
@@ -402,23 +440,7 @@ fn main() -> anyhow::Result<()> {
 mod tests {
     use super::*;
     use std::fs;
-    use std::io::SeekFrom;
     use std::process::{Command, Stdio};
-
-    #[test]
-    fn password_from_cmd() {
-        let pw = get_password(Some("password"), None).unwrap();
-        assert_eq!(pw, "password");
-    }
-
-    #[test]
-    fn password_from_file() {
-        let mut tmp_file = tempfile::NamedTempFile::new().expect("could not create temp file");
-        write!(tmp_file, "password").expect("could not write to temp file");
-        tmp_file.seek(SeekFrom::Start(0)).unwrap();
-        let pw = get_password(None, Some(tmp_file.path())).unwrap();
-        assert_eq!(pw, "password");
-    }
 
     #[test]
     fn from_stdin() {
@@ -502,14 +524,5 @@ mod tests {
         let decrypted_text =
             fs::read_to_string(file_decrypted).expect("could not read from decrypted file");
         assert_eq!(decrypted_text, plaintext);
-    }
-
-    #[test]
-    fn which_less() {
-        assert!(which("less").unwrap_or("nope".into()).ends_with("/less"));
-        assert!(which("lesssss")
-            .unwrap_err()
-            .to_string()
-            .starts_with("which: no"));
     }
 }
