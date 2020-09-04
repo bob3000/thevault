@@ -210,7 +210,7 @@ fn vault_edit(
                 .unsecure()
                 .to_vec();
 
-            let editor_cmd = env::var("EDITOR").unwrap_or("less".to_string());
+            let editor_cmd = env::var("EDITOR").unwrap_or("vim".to_string());
             let editor =
                 helper::which(&editor_cmd).with_context(|| format!("no pager was found"))?;
 
