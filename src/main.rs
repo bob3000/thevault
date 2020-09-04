@@ -177,12 +177,19 @@ fn vault_decrypt(
     inplace: bool,
 ) -> anyhow::Result<()> {
     let pass = helper::get_password(password, password_file)?;
-    io::read_process_write(file_input, file_output, inplace, |cipher_package| {
-        let plaintext = crypto::decrypt(SecStr::from(pass.clone()), cipher_package)?
-            .unsecure()
-            .to_vec();
-        Ok(plaintext)
-    })?;
+    io::read_process_write(
+        file_input,
+        file_output,
+        inplace,
+        &io::read_encryped_chunk,
+        &io::write_plain_chunk,
+        |cipher_package| {
+            let plaintext = crypto::decrypt(SecStr::from(pass.clone()), cipher_package)?
+                .unsecure()
+                .to_vec();
+            Ok(plaintext)
+        },
+    )?;
     Ok(())
 }
 
@@ -192,34 +199,42 @@ fn vault_edit(
     password_file: Option<&Path>,
 ) -> anyhow::Result<()> {
     let pass = helper::get_password(password, password_file)?;
-    io::read_process_write(Some(file_input), None, true, |cipher_package| {
-        let plaintext = crypto::decrypt(SecStr::from(pass.clone()), cipher_package)?
-            .unsecure()
-            .to_vec();
+    io::read_process_write(
+        Some(file_input),
+        None,
+        true,
+        &io::read_encryped_chunk,
+        &io::write_plain_chunk,
+        |cipher_package| {
+            let plaintext = crypto::decrypt(SecStr::from(pass.clone()), cipher_package)?
+                .unsecure()
+                .to_vec();
 
-        let editor_cmd = env::var("EDITOR").unwrap_or("less".to_string());
-        let editor = helper::which(&editor_cmd).with_context(|| format!("no pager was found"))?;
+            let editor_cmd = env::var("EDITOR").unwrap_or("less".to_string());
+            let editor =
+                helper::which(&editor_cmd).with_context(|| format!("no pager was found"))?;
 
-        let mut tmp_file = tempfile::NamedTempFile::new()?;
-        tmp_file.write_all(&plaintext)?;
+            let mut tmp_file = tempfile::NamedTempFile::new()?;
+            tmp_file.write_all(&plaintext)?;
 
-        let mut editor_process = Command::new(editor)
-            .arg(tmp_file.path())
-            .spawn()
-            .with_context(|| format!("error while spawning pager {}", editor_cmd))?;
-        editor_process.wait()?;
+            let mut editor_process = Command::new(editor)
+                .arg(tmp_file.path())
+                .spawn()
+                .with_context(|| format!("error while spawning pager {}", editor_cmd))?;
+            editor_process.wait()?;
 
-        let mut changed_text: Vec<u8> = Vec::new();
-        tmp_file.reopen()?.read_to_end(&mut changed_text)?;
+            let mut changed_text: Vec<u8> = Vec::new();
+            tmp_file.reopen()?.read_to_end(&mut changed_text)?;
 
-        let cipher_package = crypto::encrypt(
-            SecStr::from(pass.clone()),
-            SecVec::from(changed_text.to_vec()),
-        );
-        drop(tmp_file);
+            let cipher_package = crypto::encrypt(
+                SecStr::from(pass.clone()),
+                SecVec::from(changed_text.to_vec()),
+            );
+            drop(tmp_file);
 
-        Ok(cipher_package)
-    })?;
+            Ok(cipher_package)
+        },
+    )?;
     Ok(())
 }
 
@@ -231,13 +246,20 @@ fn vault_encrypt(
     inplace: bool,
 ) -> anyhow::Result<()> {
     let pass = helper::get_password(password, password_file)?;
-    io::read_process_write(file_input, file_output, inplace, |cipher_package| {
-        let ciphertext = crypto::encrypt(
-            SecStr::from(pass.clone()),
-            SecVec::new(cipher_package.to_vec()),
-        );
-        Ok(ciphertext)
-    })?;
+    io::read_process_write(
+        file_input,
+        file_output,
+        inplace,
+        &io::read_plain_chunk,
+        &io::write_encrypted_chunk,
+        |cipher_package| {
+            let ciphertext = crypto::encrypt(
+                SecStr::from(pass.clone()),
+                SecVec::new(cipher_package.to_vec()),
+            );
+            Ok(ciphertext)
+        },
+    )?;
     Ok(())
 }
 
@@ -247,25 +269,32 @@ fn vault_view(
     password_file: Option<&Path>,
 ) -> anyhow::Result<()> {
     let pass = helper::get_password(password, password_file)?;
-    io::read_process_write(Some(file_input), None, false, |cipher_package| {
-        let plain_bytes = crypto::decrypt(SecStr::from(pass.clone()), cipher_package)?
-            .unsecure()
-            .to_vec();
-        let plaintext = String::from_utf8(plain_bytes)?;
+    io::read_process_write(
+        Some(file_input),
+        None,
+        false,
+        &io::read_plain_chunk,
+        &io::write_encrypted_chunk,
+        |cipher_package| {
+            let plain_bytes = crypto::decrypt(SecStr::from(pass.clone()), cipher_package)?
+                .unsecure()
+                .to_vec();
+            let plaintext = String::from_utf8(plain_bytes)?;
 
-        let pager_cmd = env::var("PAGER").unwrap_or("less".to_string());
-        let pager = helper::which(&pager_cmd).with_context(|| format!("no pager was found"))?;
+            let pager_cmd = env::var("PAGER").unwrap_or("less".to_string());
+            let pager = helper::which(&pager_cmd).with_context(|| format!("no pager was found"))?;
 
-        let mut pager_process = Command::new(pager)
-            .stdin(Stdio::piped())
-            .spawn()
-            .with_context(|| format!("error while spawning pager {}", pager_cmd))?;
+            let mut pager_process = Command::new(pager)
+                .stdin(Stdio::piped())
+                .spawn()
+                .with_context(|| format!("error while spawning pager {}", pager_cmd))?;
 
-        let pager_stdin = pager_process.stdin.as_mut().unwrap();
-        write!(pager_stdin, "{}", plaintext)?;
-        pager_process.wait()?;
-        Ok("".as_bytes().to_vec())
-    })?;
+            let pager_stdin = pager_process.stdin.as_mut().unwrap();
+            write!(pager_stdin, "{}", plaintext)?;
+            pager_process.wait()?;
+            Ok("".as_bytes().to_vec())
+        },
+    )?;
     Ok(())
 }
 
@@ -494,9 +523,9 @@ mod tests {
             tempfile::NamedTempFile::new().expect("could not create temp decrypted file");
 
         let password = "password";
-        let plaintext = "this is supposed to be encrypted";
+        let plaintext = b"this is supposed to be encrypted";
         file_input
-            .write_all(plaintext.as_bytes())
+            .write_all(plaintext)
             .expect("could not write to infile");
 
         vault_encrypt(
@@ -508,8 +537,7 @@ mod tests {
         )
         .expect("error vault encryption");
 
-        let ciphertext =
-            fs::read_to_string(&file_output).expect("could not read cipertext from outfile");
+        let ciphertext = fs::read(&file_output).expect("could not read ciphertext from outfile");
         assert_ne!(ciphertext, plaintext);
 
         vault_decrypt(
@@ -521,8 +549,7 @@ mod tests {
         )
         .expect("error vault encryption");
 
-        let decrypted_text =
-            fs::read_to_string(file_decrypted).expect("could not read from decrypted file");
+        let decrypted_text = fs::read(file_decrypted).expect("could not read from decrypted file");
         assert_eq!(decrypted_text, plaintext);
     }
 }

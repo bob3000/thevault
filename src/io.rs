@@ -1,20 +1,26 @@
 use anyhow::Context;
+use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::fs::{self, File};
-use std::io;
 use std::io::prelude::*;
+use std::io::{self, BufReader, BufWriter};
 use std::path::{Path, PathBuf};
+
 // Basically all functionality of the program requires three steps
 // 1. reading from a file or stdin
 // 2. apply a function on the data (encrypt or decrypt)
 // 3. write to a file or stdout
 // This function encapsulates this reoccurring procedure
-pub fn read_process_write<F>(
+pub fn read_process_write<D, E, F>(
     file: Option<&Path>,
     outfile: Option<&Path>,
     inplace: bool,
+    fn_read: D,
+    fn_write: E,
     mut fn_process: F,
 ) -> anyhow::Result<()>
 where
+    D: Fn(&mut dyn Read) -> anyhow::Result<Vec<u8>>,
+    E: Fn(&mut dyn Write, &[u8]) -> anyhow::Result<()>,
     F: FnMut(&Vec<u8>) -> anyhow::Result<Vec<u8>>,
 {
     let do_inplace = if file == outfile { true } else { inplace };
@@ -22,7 +28,7 @@ where
     let mut temporary_file: Option<PathBuf> = None;
 
     // create the reader
-    let mut reader: Box<dyn Read> = match file {
+    let reader: Box<dyn Read> = match file {
         // the reader is a file if a path is given
         Some(path) => {
             let f = File::open(path.clone())
@@ -63,15 +69,17 @@ where
         _ => None,
     };
 
-    // read the data
-    let mut read_buf: Vec<u8> = Vec::new();
-    reader.read_to_end(&mut read_buf)?;
-
-    // apply function
-    let processed = fn_process(&read_buf)?;
-
-    // write it back to the desired output
-    writer.unwrap().write_all(&processed)?;
+    // loop until fn_read returns an empty buffer
+    let mut wtr = BufWriter::new(writer.unwrap());
+    let mut rdr = BufReader::new(reader);
+    loop {
+        let got_bytes = fn_read(&mut rdr)?;
+        if got_bytes.len() == 0 {
+            break;
+        }
+        let processed = fn_process(&got_bytes)?;
+        fn_write(&mut wtr, &processed)?;
+    }
 
     // if a temporary file was used for an inplace operation we have to rename
     // the temporary file to the actual input file
@@ -84,5 +92,40 @@ where
         })?;
     }
 
+    Ok(())
+}
+
+pub fn read_plain_chunk(reader: &mut dyn Read) -> anyhow::Result<Vec<u8>> {
+    let chunk_size: u64 = 256;
+    let mut buf: Vec<u8> = Vec::with_capacity(chunk_size as usize);
+    reader.take(chunk_size).read_to_end(&mut buf)?;
+    Ok(buf)
+}
+
+pub fn read_encryped_chunk(reader: &mut dyn Read) -> anyhow::Result<Vec<u8>> {
+    let chunk_size = match reader.read_u32::<BigEndian>() {
+        Ok(n) => n,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let mut buf: Vec<u8> = Vec::with_capacity(chunk_size as usize);
+    // now reading the actual chunk
+    let bytes_read = reader
+        .take(chunk_size as u64)
+        .read_to_end(&mut buf)
+        .with_context(|| format!("Error reading encrypted file"))?;
+    if bytes_read < chunk_size as usize {
+        return Err(anyhow::anyhow!("could not read entire data chunk"));
+    }
+    Ok(buf)
+}
+
+pub fn write_plain_chunk(writer: &mut dyn Write, chunk: &[u8]) -> anyhow::Result<()> {
+    writer.write_all(&chunk)?;
+    Ok(())
+}
+
+pub fn write_encrypted_chunk(writer: &mut dyn Write, chunk: &[u8]) -> anyhow::Result<()> {
+    writer.write_u32::<BigEndian>(chunk.len() as u32)?;
+    writer.write_all(&chunk)?;
     Ok(())
 }
