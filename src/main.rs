@@ -169,7 +169,7 @@ use structopt::StructOpt;
 // helper functions
 
 // sub commands
-fn vault_decrypt(
+async fn vault_decrypt(
     file_input: Option<&Path>,
     file_output: Option<&Path>,
     password: Option<&str>,
@@ -181,19 +181,19 @@ fn vault_decrypt(
         file_input,
         file_output,
         inplace,
-        &io::read_encryped_chunk,
-        &io::write_plain_chunk,
-        |cipher_package| {
+        io::Action::Decrypt,
+        |cipher_package| -> anyhow::Result<Vec<u8>> {
             let plaintext = crypto::decrypt(SecStr::from(pass.clone()), cipher_package)?
                 .unsecure()
                 .to_vec();
             Ok(plaintext)
         },
-    )?;
+    )
+    .await?;
     Ok(())
 }
 
-fn vault_edit(
+async fn vault_edit(
     file_input: &Path,
     password: Option<&str>,
     password_file: Option<&Path>,
@@ -203,8 +203,7 @@ fn vault_edit(
         Some(file_input),
         None,
         true,
-        &io::read_encryped_chunk,
-        &io::write_plain_chunk,
+        io::Action::Decrypt,
         |cipher_package| {
             let plaintext = crypto::decrypt(SecStr::from(pass.clone()), cipher_package)?
                 .unsecure()
@@ -234,11 +233,12 @@ fn vault_edit(
 
             Ok(cipher_package)
         },
-    )?;
+    )
+    .await?;
     Ok(())
 }
 
-fn vault_encrypt(
+async fn vault_encrypt(
     file_input: Option<&Path>,
     file_output: Option<&Path>,
     password: Option<&str>,
@@ -250,8 +250,7 @@ fn vault_encrypt(
         file_input,
         file_output,
         inplace,
-        &io::read_plain_chunk,
-        &io::write_encrypted_chunk,
+        io::Action::Encrypt,
         |cipher_package| {
             let ciphertext = crypto::encrypt(
                 SecStr::from(pass.clone()),
@@ -259,11 +258,12 @@ fn vault_encrypt(
             );
             Ok(ciphertext)
         },
-    )?;
+    )
+    .await?;
     Ok(())
 }
 
-fn vault_view(
+async fn vault_view(
     file_input: &Path,
     password: Option<&str>,
     password_file: Option<&Path>,
@@ -273,8 +273,7 @@ fn vault_view(
         Some(file_input),
         None,
         false,
-        &io::read_plain_chunk,
-        &io::write_encrypted_chunk,
+        io::Action::Decrypt,
         |cipher_package| {
             let plain_bytes = crypto::decrypt(SecStr::from(pass.clone()), cipher_package)?
                 .unsecure()
@@ -294,7 +293,8 @@ fn vault_view(
             pager_process.wait()?;
             Ok("".as_bytes().to_vec())
         },
-    )?;
+    )
+    .await?;
     Ok(())
 }
 
@@ -424,7 +424,8 @@ enum Opt {
     },
 }
 
-fn main() -> anyhow::Result<()> {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     match Opt::from_args() {
         Opt::Decrypt {
             file,
@@ -432,36 +433,42 @@ fn main() -> anyhow::Result<()> {
             password,
             password_file,
             inplace,
-        } => vault_decrypt(
-            file.as_deref(),
-            outfile.as_deref(),
-            password.as_deref(),
-            password_file.as_deref(),
-            inplace,
-        ),
+        } => {
+            vault_decrypt(
+                file.as_deref(),
+                outfile.as_deref(),
+                password.as_deref(),
+                password_file.as_deref(),
+                inplace,
+            )
+            .await
+        }
         Opt::Edit {
             file,
             password,
             password_file,
-        } => vault_edit(file.as_ref(), password.as_deref(), password_file.as_deref()),
+        } => vault_edit(file.as_ref(), password.as_deref(), password_file.as_deref()).await,
         Opt::Encrypt {
             file,
             outfile,
             password,
             password_file,
             inplace,
-        } => vault_encrypt(
-            file.as_deref(),
-            outfile.as_deref(),
-            password.as_deref(),
-            password_file.as_deref(),
-            inplace,
-        ),
+        } => {
+            vault_encrypt(
+                file.as_deref(),
+                outfile.as_deref(),
+                password.as_deref(),
+                password_file.as_deref(),
+                inplace,
+            )
+            .await
+        }
         Opt::View {
             file,
             password,
             password_file,
-        } => vault_view(file.as_ref(), password.as_deref(), password_file.as_deref()),
+        } => vault_view(file.as_ref(), password.as_deref(), password_file.as_deref()).await,
     }
 }
 
@@ -513,8 +520,8 @@ mod tests {
         assert_eq!(decrypted_text, plaintext);
     }
 
-    #[test]
-    fn from_file() {
+    #[tokio::test]
+    async fn from_file() {
         let mut file_input =
             tempfile::NamedTempFile::new().expect("could not create temp input file");
         let file_output =
@@ -535,6 +542,7 @@ mod tests {
             None,
             false,
         )
+        .await
         .expect("error vault encryption");
 
         let ciphertext = fs::read(&file_output).expect("could not read ciphertext from outfile");
@@ -547,6 +555,7 @@ mod tests {
             None,
             false,
         )
+        .await
         .expect("error vault encryption");
 
         let decrypted_text = fs::read(file_decrypted).expect("could not read from decrypted file");
