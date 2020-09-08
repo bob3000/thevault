@@ -1,4 +1,5 @@
 use anyhow::Context;
+use futures::future::Future;
 use std::path::{Path, PathBuf};
 use tokio::fs::{self, File};
 use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -13,7 +14,7 @@ pub enum Action {
 // 2. apply a function on the data (encrypt or decrypt)
 // 3. write to a file or stdout
 // This function encapsulates this reoccurring procedure
-pub async fn read_process_write<F>(
+pub async fn read_process_write<F, R>(
     file: Option<&Path>,
     outfile: Option<&Path>,
     inplace: bool,
@@ -21,7 +22,8 @@ pub async fn read_process_write<F>(
     fn_process: F,
 ) -> anyhow::Result<()>
 where
-    F: Fn(&[u8]) -> anyhow::Result<Vec<u8>>,
+    F: Fn(Vec<u8>) -> R,
+    R: Future<Output = anyhow::Result<Vec<u8>>>,
 {
     let do_inplace = if file == outfile { true } else { inplace };
     // for inplace encryption we actually have to use a temporary file
@@ -83,7 +85,7 @@ where
             break;
         }
 
-        let processed = fn_process(&got_bytes)?;
+        let processed = fn_process(got_bytes).await?;
         match action {
             Action::Decrypt => write_plain_chunk(&mut writer, &processed).await?,
             Action::Encrypt => write_encrypted_chunk(&mut writer, &processed).await?,
