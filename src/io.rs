@@ -1,8 +1,7 @@
 use anyhow::Context;
 use std::path::{Path, PathBuf};
 use tokio::fs::{self, File};
-use tokio::io::{self, BufReader, BufWriter};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 pub enum Action {
     Decrypt,
@@ -29,7 +28,7 @@ where
     let mut temporary_file: Option<PathBuf> = None;
 
     // create the reader
-    let reader: Box<dyn AsyncRead + Unpin> = match file {
+    let mut reader: Box<dyn AsyncRead + Unpin> = match file {
         // the reader is a file if a path is given
         Some(path) => {
             let f = File::open(path.clone())
@@ -72,13 +71,12 @@ where
     };
 
     // loop until fn_read returns an empty buffer
-    let mut wtr = BufWriter::new(writer.unwrap());
-    let mut rdr = BufReader::new(reader);
+    let mut writer = writer.unwrap();
 
     loop {
         let got_bytes: Vec<u8> = match action {
-            Action::Decrypt => read_encryped_chunk(&mut rdr).await?,
-            Action::Encrypt => read_plain_chunk(&mut rdr).await?,
+            Action::Decrypt => read_encryped_chunk(&mut reader).await?,
+            Action::Encrypt => read_plain_chunk(&mut reader).await?,
         };
 
         if got_bytes.len() == 0 {
@@ -87,8 +85,8 @@ where
 
         let processed = fn_process(&got_bytes)?;
         match action {
-            Action::Decrypt => write_plain_chunk(&mut wtr, &processed).await?,
-            Action::Encrypt => write_encrypted_chunk(&mut wtr, &processed).await?,
+            Action::Decrypt => write_plain_chunk(&mut writer, &processed).await?,
+            Action::Encrypt => write_encrypted_chunk(&mut writer, &processed).await?,
         };
     }
 
@@ -128,7 +126,6 @@ pub async fn read_encryped_chunk(reader: &mut (dyn AsyncRead + Unpin)) -> anyhow
         .await
         .with_context(|| format!("Error reading encrypted file"))?;
     if bytes_read < chunk_size as usize {
-        println!("bytes read: {} - chunk size: {}", bytes_read, chunk_size);
         return Err(anyhow::anyhow!("could not read entire data chunk"));
     }
     Ok(buf)
