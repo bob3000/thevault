@@ -33,6 +33,66 @@ trait ChunkWriting {
     ) -> anyhow::Result<()>;
 }
 
+#[async_trait]
+impl ChunkReading for ChunkReader {
+    async fn read_plain_chunk(
+        reader: Arc<Mutex<Box<dyn AsyncRead + Unpin + Send + Sync>>>,
+    ) -> anyhow::Result<Option<Vec<u8>>> {
+        let chunk_size: u64 = 256;
+        let mut buf: Vec<u8> = Vec::with_capacity(chunk_size as usize);
+        let bytes_read = reader.lock().await.read_buf(&mut buf).await?;
+        if bytes_read > 0 {
+            Ok(Some(buf.to_vec()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn read_encrypted_chunk(
+        reader: Arc<Mutex<Box<dyn AsyncRead + Unpin + Send + Sync>>>,
+    ) -> anyhow::Result<Option<Vec<u8>>> {
+        let chunk_size = match reader.lock().await.read_u32().await {
+            Ok(n) => n,
+            Err(_) => return Ok(None),
+        };
+        let mut buf: Vec<u8> = Vec::with_capacity(chunk_size as usize);
+        // now reading the actual chunk
+        let bytes_read = reader
+            .lock()
+            .await
+            .read_buf(&mut buf)
+            .await
+            .with_context(|| format!("Error reading encrypted file"))?;
+        if bytes_read < chunk_size as usize {
+            return Err(anyhow::anyhow!("could not read entire data chunk"));
+        }
+        if bytes_read > 0 {
+            Ok(Some(buf))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+#[async_trait]
+impl ChunkWriting for ChunkWriter {
+    async fn write_plain_chunk(
+        writer: Arc<Mutex<Box<dyn AsyncWrite + Unpin + Send + Sync>>>,
+        chunk: Vec<u8>,
+    ) -> anyhow::Result<()> {
+        writer.lock().await.write_all(&chunk).await?;
+        Ok(())
+    }
+
+    async fn write_encrypted_chunk(
+        writer: Arc<Mutex<Box<dyn AsyncWrite + Unpin + Send + Sync>>>,
+        chunk: Vec<u8>,
+    ) -> anyhow::Result<()> {
+        writer.lock().await.write_u32(chunk.len() as u32).await?;
+        writer.lock().await.write_all(&chunk).await?;
+        Ok(())
+    }
+}
 #[derive(Debug, Copy, Clone)]
 pub enum Action {
     Decrypt,
@@ -134,66 +194,4 @@ where
     }
 
     Ok(())
-}
-
-#[async_trait]
-impl ChunkReading for ChunkReader {
-    async fn read_plain_chunk(
-        reader: Arc<Mutex<Box<dyn AsyncRead + Unpin + Send + Sync>>>,
-    ) -> anyhow::Result<Option<Vec<u8>>> {
-        let chunk_size: u64 = 256;
-        // let mut buf: Vec<u8> = Vec::with_capacity(chunk_size as usize);
-        let mut buf = [0, 255];
-        let bytes_read = reader.lock().await.read(&mut buf).await?;
-        if bytes_read > 0 {
-            Ok(Some(buf.to_vec()))
-        } else {
-            Ok(None)
-        }
-    }
-
-    async fn read_encrypted_chunk(
-        reader: Arc<Mutex<Box<dyn AsyncRead + Unpin + Send + Sync>>>,
-    ) -> anyhow::Result<Option<Vec<u8>>> {
-        let chunk_size = match reader.lock().await.read_u32().await {
-            Ok(n) => n,
-            Err(_) => return Ok(None),
-        };
-        let mut buf: Vec<u8> = Vec::with_capacity(chunk_size as usize);
-        // now reading the actual chunk
-        let bytes_read = reader
-            .lock()
-            .await
-            .read(&mut buf)
-            .await
-            .with_context(|| format!("Error reading encrypted file"))?;
-        if bytes_read < chunk_size as usize {
-            return Err(anyhow::anyhow!("could not read entire data chunk"));
-        }
-        if bytes_read > 0 {
-            Ok(Some(buf))
-        } else {
-            Ok(None)
-        }
-    }
-}
-
-#[async_trait]
-impl ChunkWriting for ChunkWriter {
-    async fn write_plain_chunk(
-        writer: Arc<Mutex<Box<dyn AsyncWrite + Unpin + Send + Sync>>>,
-        chunk: Vec<u8>,
-    ) -> anyhow::Result<()> {
-        writer.lock().await.write_all(&chunk).await?;
-        Ok(())
-    }
-
-    async fn write_encrypted_chunk(
-        writer: Arc<Mutex<Box<dyn AsyncWrite + Unpin + Send + Sync>>>,
-        chunk: Vec<u8>,
-    ) -> anyhow::Result<()> {
-        writer.lock().await.write_u32(chunk.len() as u32).await?;
-        writer.lock().await.write_all(&chunk).await?;
-        Ok(())
-    }
 }

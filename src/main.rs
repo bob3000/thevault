@@ -185,7 +185,6 @@ async fn vault_decrypt<'a>(
         move |cipher_package| {
             let pw = pass.clone();
             async move {
-                println!("decrypting");
                 let plaintext = crypto::decrypt(SecStr::from(pw), cipher_package)
                     .await?
                     .unsecure()
