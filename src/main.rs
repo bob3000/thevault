@@ -45,6 +45,7 @@ USAGE:
     thevault encrypt [FLAGS] [OPTIONS]
 
 FLAGS:
+    -b, --base64     Write out the encrypted message as base64 encoded string
     -h, --help       Prints help information
     -i, --inplace    Wether to write to encrypted message to the source file
     -V, --version    Prints version information
@@ -249,13 +250,19 @@ async fn vault_encrypt<'a>(
     mut password: Option<String>,
     password_file: Option<PathBuf>,
     inplace: bool,
+    base64: bool,
 ) -> anyhow::Result<()> {
     let pass = helper::get_password(&mut password, &password_file).unwrap();
+    let encoding = if base64 {
+        io::Action::EncryptB64
+    } else {
+        io::Action::Encrypt
+    };
     io::read_process_write(
         file_input,
         file_output,
         inplace,
-        io::Action::Encrypt,
+        encoding,
         move |plaintext| {
             let pw = pass.clone();
             async move {
@@ -348,7 +355,7 @@ enum Opt {
         #[structopt(
             long,
             short,
-            help = "Wether to write to encrypted message to the source file"
+            help = "Wether to write to decrypted message to the source file"
         )]
         inplace: bool,
     },
@@ -411,6 +418,12 @@ enum Opt {
             help = "Wether to write to encrypted message to the source file"
         )]
         inplace: bool,
+        #[structopt(
+            long,
+            short,
+            help = "Write out the encrypted message as base64 encoded string"
+        )]
+        base64: bool,
     },
     /// Opens an encrypted file in the default pager
     View {
@@ -466,6 +479,7 @@ async fn main() -> anyhow::Result<()> {
             password,
             password_file,
             inplace,
+            base64,
         } => {
             vault_encrypt(
                 file.as_deref(),
@@ -473,6 +487,7 @@ async fn main() -> anyhow::Result<()> {
                 password,
                 password_file,
                 inplace,
+                base64,
             )
             .await
         }
@@ -553,6 +568,7 @@ mod tests {
             Some(password.clone()),
             None,
             false,
+            true,
         )
         .await
         .expect("error vault encryption");

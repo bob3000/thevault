@@ -44,6 +44,7 @@ USAGE:
     thevault encrypt [FLAGS] [OPTIONS]
 
 FLAGS:
+    -b, --base64     Write out the encrypted message as base64 encoded string
     -h, --help       Prints help information
     -i, --inplace    Wether to write to encrypted message to the source file
     -V, --version    Prints version information

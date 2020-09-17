@@ -1,5 +1,4 @@
 use aes::Aes256;
-use base64::DecodeError;
 use block_modes::block_padding::Iso7816;
 use block_modes::{BlockMode, InvalidKeyIvLength};
 use crypto_mac::MacError;
@@ -40,9 +39,7 @@ pub async fn encrypt(password: SecStr, plaintext: SecVec<u8>) -> Vec<u8> {
     result.extend(init_vec);
     result.extend(checksum);
     result.extend(ciphertext);
-
-    // base64 encode
-    base64::encode(result).as_bytes().to_vec()
+    result
 }
 
 // let salt = cipher_package[..16].to_vec();
@@ -56,22 +53,19 @@ pub async fn decrypt(
     if cipher_package.len() < 64 {
         return Err(DecryptionError::InvalidCipherLength);
     }
-    // base64 decode
-    let cpackage = base64::decode(cipher_package)?;
-
     // derrive key
-    let h = Hkdf::<Sha256>::new(Some(&cpackage[..16]), &password.unsecure()[..]);
+    let h = Hkdf::<Sha256>::new(Some(&cipher_package[..16]), &password.unsecure()[..]);
     let mut key = [0u8; 32];
     h.expand(&[], &mut key).unwrap();
 
     // verify hmac
     let mut mac = HmacSha256::new_varkey(&key[..]).unwrap();
-    mac.update(&cpackage[64..]);
-    mac.verify(&cpackage[32..64])?;
+    mac.update(&cipher_package[64..]);
+    mac.verify(&cipher_package[32..64])?;
 
     // decrypt
-    let cipher = Aes256Cbc::new_var(&key[..], &cpackage[16..32])?;
-    let plaintext = cipher.decrypt_vec(&cpackage[64..]).unwrap();
+    let cipher = Aes256Cbc::new_var(&key[..], &cipher_package[16..32])?;
+    let plaintext = cipher.decrypt_vec(&cipher_package[64..]).unwrap();
 
     Ok(SecVec::new(plaintext))
 }
@@ -84,8 +78,6 @@ pub enum DecryptionError {
     HmacVerificationFailure(#[from] MacError),
     #[error("Improper key length")]
     KeyError(#[from] InvalidKeyIvLength),
-    #[error("base64 decoding error")]
-    Base64Error(#[from] DecodeError),
 }
 
 #[cfg(test)]
@@ -100,14 +92,6 @@ mod test {
         assert_ne!(&message.unsecure()[..], &ciphertext[..]);
         let decrypted_text = decrypt(password, ciphertext).await.unwrap();
         assert_eq!(&message.unsecure(), &decrypted_text.unsecure());
-    }
-
-    #[tokio::test]
-    async fn base64_error() {
-        let password = SecStr::from("0123456789ABCDEF0123456789ABCDEF");
-        let ciphertext = b"?".repeat(65);
-        let decryption_err = decrypt(password, ciphertext).await.unwrap_err();
-        assert_eq!(decryption_err.to_string(), "base64 decoding error");
     }
 
     #[tokio::test]

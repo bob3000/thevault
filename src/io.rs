@@ -10,26 +10,7 @@ use tokio::sync::Mutex;
 
 // Size of a chunks being read from the input source
 const CHUNK_SIZE: u64 = 4096;
-
-#[async_trait]
-impl ChunkWriting for ChunkWriter {
-    async fn write_plain_chunk(
-        writer: Arc<Mutex<Box<dyn AsyncWrite + Unpin + Send + Sync>>>,
-        chunk: Vec<u8>,
-    ) -> anyhow::Result<()> {
-        writer.lock().await.write_all(&chunk).await?;
-        Ok(())
-    }
-
-    async fn write_encrypted_chunk(
-        writer: Arc<Mutex<Box<dyn AsyncWrite + Unpin + Send + Sync>>>,
-        chunk: Vec<u8>,
-    ) -> anyhow::Result<()> {
-        writer.lock().await.write_u32(chunk.len() as u32).await?;
-        writer.lock().await.write_all(&chunk).await?;
-        Ok(())
-    }
-}
+const BASE64_MARKER: &[u8] = b"THEVAULTB64";
 
 struct ChunkReader;
 #[async_trait]
@@ -41,20 +22,10 @@ trait ChunkReading {
     async fn read_encrypted_chunk(
         reader: Arc<Mutex<Box<dyn AsyncRead + Unpin + Send + Sync>>>,
     ) -> anyhow::Result<Option<Vec<u8>>>;
-}
 
-struct ChunkWriter;
-#[async_trait]
-trait ChunkWriting {
-    async fn write_plain_chunk(
-        writer: Arc<Mutex<Box<dyn AsyncWrite + Unpin + Send + Sync>>>,
-        chunk: Vec<u8>,
-    ) -> anyhow::Result<()>;
-
-    async fn write_encrypted_chunk(
-        writer: Arc<Mutex<Box<dyn AsyncWrite + Unpin + Send + Sync>>>,
-        chunk: Vec<u8>,
-    ) -> anyhow::Result<()>;
+    async fn read_encrypted_b64_chunk(
+        reader: Arc<Mutex<Box<dyn AsyncRead + Unpin + Send + Sync>>>,
+    ) -> anyhow::Result<Option<Vec<u8>>>;
 }
 
 #[async_trait]
@@ -96,12 +67,72 @@ impl ChunkReading for ChunkReader {
             Ok(None)
         }
     }
+
+    async fn read_encrypted_b64_chunk(
+        reader: Arc<Mutex<Box<dyn AsyncRead + Unpin + Send + Sync>>>,
+    ) -> anyhow::Result<Option<Vec<u8>>> {
+        match Self::read_encrypted_chunk(reader).await? {
+            Some(chunk) => {
+                let plain = base64::decode(chunk).unwrap();
+                Ok::<Option<Vec<u8>>, anyhow::Error>(Some(plain))
+            }
+            None => Ok::<Option<Vec<u8>>, anyhow::Error>(None),
+        }
+    }
 }
 
-#[derive(Debug, Copy, Clone)]
+struct ChunkWriter;
+#[async_trait]
+trait ChunkWriting {
+    async fn write_plain_chunk(
+        writer: Arc<Mutex<Box<dyn AsyncWrite + Unpin + Send + Sync>>>,
+        chunk: Vec<u8>,
+    ) -> anyhow::Result<()>;
+
+    async fn write_encrypted_chunk(
+        writer: Arc<Mutex<Box<dyn AsyncWrite + Unpin + Send + Sync>>>,
+        chunk: Vec<u8>,
+    ) -> anyhow::Result<()>;
+
+    async fn write_encrypted_b64_chunk(
+        writer: Arc<Mutex<Box<dyn AsyncWrite + Unpin + Send + Sync>>>,
+        chunk: Vec<u8>,
+    ) -> anyhow::Result<()>;
+}
+
+#[async_trait]
+impl ChunkWriting for ChunkWriter {
+    async fn write_plain_chunk(
+        writer: Arc<Mutex<Box<dyn AsyncWrite + Unpin + Send + Sync>>>,
+        chunk: Vec<u8>,
+    ) -> anyhow::Result<()> {
+        writer.lock().await.write_all(&chunk).await?;
+        Ok(())
+    }
+
+    async fn write_encrypted_chunk(
+        writer: Arc<Mutex<Box<dyn AsyncWrite + Unpin + Send + Sync>>>,
+        chunk: Vec<u8>,
+    ) -> anyhow::Result<()> {
+        writer.lock().await.write_u32(chunk.len() as u32).await?;
+        writer.lock().await.write_all(&chunk).await?;
+        Ok(())
+    }
+
+    async fn write_encrypted_b64_chunk(
+        writer: Arc<Mutex<Box<dyn AsyncWrite + Unpin + Send + Sync>>>,
+        chunk: Vec<u8>,
+    ) -> anyhow::Result<()> {
+        let chunk = base64::encode(chunk).as_bytes().to_vec();
+        ChunkWriter::write_encrypted_chunk(writer, chunk).await
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum Action {
     Decrypt,
     Encrypt,
+    EncryptB64,
 }
 
 // Basically all functionality of the program requires three steps
@@ -171,13 +202,39 @@ where
     let reader = Arc::new(Mutex::new(reader));
 
     let fn_read = match action {
-        Action::Decrypt => ChunkReader::read_encrypted_chunk,
+        Action::Decrypt => {
+            let mut marker = Vec::with_capacity(BASE64_MARKER.len());
+            reader.lock().await.read_buf(&mut marker).await?;
+            if marker == BASE64_MARKER {
+                ChunkReader::read_encrypted_b64_chunk
+            } else {
+                ChunkReader::read_encrypted_chunk
+            }
+        }
         Action::Encrypt => ChunkReader::read_plain_chunk,
+        Action::EncryptB64 => ChunkReader::read_plain_chunk,
     };
 
     let fn_write = match action {
         Action::Decrypt => ChunkWriter::write_plain_chunk,
-        Action::Encrypt => ChunkWriter::write_encrypted_chunk,
+        Action::Encrypt => {
+            writer
+                .lock()
+                .await
+                .write_all(&vec![0; BASE64_MARKER.len()])
+                .await
+                .with_context(|| format!("failed to write to output"))?;
+            ChunkWriter::write_encrypted_chunk
+        }
+        Action::EncryptB64 => {
+            writer
+                .lock()
+                .await
+                .write_all(BASE64_MARKER)
+                .await
+                .with_context(|| format!("failed to write to output"))?;
+            ChunkWriter::write_encrypted_b64_chunk
+        }
     };
 
     let (mut tx, mut rx) = mpsc::channel(100);
