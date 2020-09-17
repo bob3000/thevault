@@ -117,7 +117,7 @@ where
 
     while let Some(chunk) = fn_read(Arc::clone(&reader)).await? {
         let processed_chunk = fn_process(chunk).await?;
-        fn_write(Arc::clone(&writer), processed_chunk);
+        fn_write(Arc::clone(&writer), processed_chunk).await?;
     }
 
     // if a temporary file was used for an inplace operation we have to rename
@@ -142,10 +142,11 @@ impl ChunkReading for ChunkReader {
         reader: Arc<Mutex<Box<dyn AsyncRead + Unpin + Send + Sync>>>,
     ) -> anyhow::Result<Option<Vec<u8>>> {
         let chunk_size: u64 = 256;
-        let mut buf: Vec<u8> = Vec::with_capacity(chunk_size as usize);
+        // let mut buf: Vec<u8> = Vec::with_capacity(chunk_size as usize);
+        let mut buf = [0, 255];
         let bytes_read = reader.lock().await.read(&mut buf).await?;
         if bytes_read > 0 {
-            Ok(Some(buf))
+            Ok(Some(buf.to_vec()))
         } else {
             Ok(None)
         }

@@ -176,16 +176,17 @@ async fn vault_decrypt<'a>(
     password_file: Option<PathBuf>,
     inplace: bool,
 ) -> anyhow::Result<()> {
+    let pass = helper::get_password(&mut password, &password_file).unwrap();
     io::read_process_write(
         file_input,
         file_output,
         inplace,
         io::Action::Decrypt,
         move |cipher_package| {
-            let pass = helper::get_password(&mut password, &password_file).unwrap();
+            let pw = pass.clone();
             async move {
                 println!("decrypting");
-                let plaintext = crypto::decrypt(SecStr::from(pass.clone()), cipher_package)
+                let plaintext = crypto::decrypt(SecStr::from(pw), cipher_package)
                     .await?
                     .unsecure()
                     .to_vec();
@@ -202,15 +203,16 @@ async fn vault_edit<'a>(
     mut password: Option<String>,
     password_file: Option<PathBuf>,
 ) -> anyhow::Result<()> {
+    let pass = helper::get_password(&mut password, &password_file).unwrap();
     io::read_process_write(
         Some(file_input),
         None,
         true,
         io::Action::Decrypt,
         move |cipher_package| {
-            let pass = helper::get_password(&mut password, &password_file).unwrap();
+            let pw = pass.clone();
             async move {
-                let plaintext = crypto::decrypt(SecStr::from(pass.clone()), cipher_package)
+                let plaintext = crypto::decrypt(SecStr::from(pw.clone()), cipher_package)
                     .await?
                     .unsecure()
                     .to_vec();
@@ -231,11 +233,8 @@ async fn vault_edit<'a>(
                 let mut changed_text: Vec<u8> = Vec::new();
                 tmp_file.reopen()?.read_to_end(&mut changed_text)?;
 
-                let cipher_package = crypto::encrypt(
-                    SecStr::from(pass.clone()),
-                    SecVec::from(changed_text.to_vec()),
-                )
-                .await;
+                let cipher_package =
+                    crypto::encrypt(SecStr::from(pw), SecVec::from(changed_text.to_vec())).await;
                 drop(tmp_file);
                 Ok::<Vec<u8>, anyhow::Error>(cipher_package)
             }
@@ -252,18 +251,17 @@ async fn vault_encrypt<'a>(
     password_file: Option<PathBuf>,
     inplace: bool,
 ) -> anyhow::Result<()> {
+    let pass = helper::get_password(&mut password, &password_file).unwrap();
     io::read_process_write(
         file_input,
         file_output,
         inplace,
         io::Action::Encrypt,
         move |plaintext| {
-            let pass = helper::get_password(&mut password, &password_file).unwrap();
+            let pw = pass.clone();
             async move {
-                println!("encrypting");
                 let ciphertext =
-                    crypto::encrypt(SecStr::from(pass.clone()), SecVec::new(plaintext.to_vec()))
-                        .await;
+                    crypto::encrypt(SecStr::from(pw), SecVec::new(plaintext.to_vec())).await;
                 Ok::<Vec<u8>, anyhow::Error>(ciphertext)
             }
         },
@@ -277,15 +275,16 @@ async fn vault_view<'a>(
     mut password: Option<String>,
     password_file: Option<PathBuf>,
 ) -> anyhow::Result<()> {
+    let pass = helper::get_password(&mut password, &password_file).unwrap();
     io::read_process_write(
         Some(file_input),
         None,
         false,
         io::Action::Decrypt,
         move |cipher_package| {
-            let pass = helper::get_password(&mut password, &password_file).unwrap();
+            let pw = pass.clone();
             async move {
-                let plain_bytes = crypto::decrypt(SecStr::from(pass.clone()), cipher_package)
+                let plain_bytes = crypto::decrypt(SecStr::from(pw), cipher_package)
                     .await?
                     .unsecure()
                     .to_vec();
