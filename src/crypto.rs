@@ -14,7 +14,7 @@ use thiserror::Error;
 type Aes256Cbc = block_modes::Cbc<Aes256, Iso7816>;
 type HmacSha256 = Hmac<Sha256>;
 
-pub fn encrypt(password: SecStr, plaintext: SecVec<u8>) -> Vec<u8> {
+pub async fn encrypt(password: SecStr, plaintext: SecVec<u8>) -> Vec<u8> {
     // generate random values
     let rng = thread_rng();
     let salt: Vec<u8> = Standard.sample_iter(rng).take(16).collect();
@@ -49,7 +49,10 @@ pub fn encrypt(password: SecStr, plaintext: SecVec<u8>) -> Vec<u8> {
 // let init_vec = cipher_package[16..32].to_vec();
 // let checksum = cipher_package[32..64].to_vec();
 // let ciphertext = cipher_package[64..].to_vec();
-pub fn decrypt(password: SecStr, cipher_package: &[u8]) -> Result<SecVec<u8>, DecryptionError> {
+pub async fn decrypt(
+    password: SecStr,
+    cipher_package: Vec<u8>,
+) -> Result<SecVec<u8>, DecryptionError> {
     if cipher_package.len() < 64 {
         return Err(DecryptionError::InvalidCipherLength);
     }
@@ -89,43 +92,45 @@ pub enum DecryptionError {
 mod test {
     use super::*;
 
-    #[test]
-    fn successful_encrypt_decrypt() {
+    #[tokio::test]
+    async fn successful_encrypt_decrypt() {
         let password = SecStr::from("0123456789ABCDEF0123456789ABCDEF");
         let message = SecVec::from("this is a very secret message!!!");
-        let ciphertext = encrypt(password.clone(), message.clone());
+        let ciphertext = encrypt(password.clone(), message.clone()).await;
         assert_ne!(&message.unsecure()[..], &ciphertext[..]);
-        let decrypted_text = decrypt(password, &ciphertext[..]).unwrap();
+        let decrypted_text = decrypt(password, ciphertext).await.unwrap();
         assert_eq!(&message.unsecure(), &decrypted_text.unsecure());
     }
 
-    #[test]
-    fn base64_error() {
+    #[tokio::test]
+    async fn base64_error() {
         let password = SecStr::from("0123456789ABCDEF0123456789ABCDEF");
         let ciphertext = b"?".repeat(65);
-        let decryption_err = decrypt(password, &ciphertext[..]).unwrap_err();
+        let decryption_err = decrypt(password, ciphertext).await.unwrap_err();
         assert_eq!(decryption_err.to_string(), "base64 decoding error");
     }
 
-    #[test]
-    fn incomplete_package() {
+    #[tokio::test]
+    async fn incomplete_package() {
         let password = SecStr::from("0123456789ABCDEF0123456789ABCDEF");
         let ciphertext = b"0123456789ABCDEF";
-        let decryption_err = decrypt(password, &ciphertext[..]).unwrap_err();
+        let decryption_err = decrypt(password, ciphertext.to_vec()).await.unwrap_err();
         assert_eq!(
             decryption_err.to_string(),
             "cipher text does not contain all necessary elements"
         );
     }
 
-    #[test]
-    fn invalid_checksum() {
+    #[tokio::test]
+    async fn invalid_checksum() {
         let password = SecStr::from("0123456789ABCDEF0123456789ABCDEF");
         let message = SecVec::from("this is a very secret message!!!");
-        let ciphertext = encrypt(password.clone(), message.clone());
+        let ciphertext = encrypt(password.clone(), message.clone()).await;
         assert_ne!(&message.unsecure()[..], &ciphertext[..]);
         let end = ciphertext.len() - 4;
-        let decryption_err = decrypt(password, &ciphertext[..end]).unwrap_err();
+        let decryption_err = decrypt(password, ciphertext[..end].to_vec())
+            .await
+            .unwrap_err();
         assert_eq!(decryption_err.to_string(), "HMAC verification failed");
     }
 }

@@ -1,19 +1,20 @@
 use std::fs::File;
 use std::io::prelude::*;
-use std::path::Path;
+use std::path::PathBuf;
 use std::process::Command;
+
 // This function is searches for the encryption / decryption password on
 // different places in the following order:
 // 1. command line argument or environment variable
 // 2. password file
 // 3. read from TTY
 pub fn get_password(
-    password: Option<&str>,
-    password_file: Option<&Path>,
+    password: &mut Option<String>,
+    password_file: &Option<PathBuf>,
 ) -> anyhow::Result<String> {
     // First option - user entered a password as a command line option
     if password.is_some() {
-        return Ok(password.unwrap().to_string());
+        return Ok(password.take().unwrap().to_string());
     };
 
     // Second option - user provided a password file
@@ -48,7 +49,7 @@ mod tests {
 
     #[test]
     fn password_from_cmd() {
-        let pw = get_password(Some("password"), None).unwrap();
+        let pw = get_password(&mut Some("password".to_string()), &None).unwrap();
         assert_eq!(pw, "password");
     }
 
@@ -57,8 +58,8 @@ mod tests {
         let mut tmp_file = tempfile::NamedTempFile::new().expect("could not create temp file");
         write!(tmp_file, "password").expect("could not write to temp file");
         tmp_file.seek(SeekFrom::Start(0)).unwrap();
-        let pw = get_password(None, Some(tmp_file.path())).unwrap();
-        assert_eq!(pw, "password");
+        let pw = get_password(&mut None, &Some(tmp_file.path().to_path_buf())).unwrap();
+        assert_eq!(pw, "password".to_string());
     }
 
     #[test]
