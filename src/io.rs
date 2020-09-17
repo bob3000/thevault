@@ -8,6 +8,29 @@ use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 
+// Size of a chunks being read from the input source
+const CHUNK_SIZE: u64 = 4096;
+
+#[async_trait]
+impl ChunkWriting for ChunkWriter {
+    async fn write_plain_chunk(
+        writer: Arc<Mutex<Box<dyn AsyncWrite + Unpin + Send + Sync>>>,
+        chunk: Vec<u8>,
+    ) -> anyhow::Result<()> {
+        writer.lock().await.write_all(&chunk).await?;
+        Ok(())
+    }
+
+    async fn write_encrypted_chunk(
+        writer: Arc<Mutex<Box<dyn AsyncWrite + Unpin + Send + Sync>>>,
+        chunk: Vec<u8>,
+    ) -> anyhow::Result<()> {
+        writer.lock().await.write_u32(chunk.len() as u32).await?;
+        writer.lock().await.write_all(&chunk).await?;
+        Ok(())
+    }
+}
+
 struct ChunkReader;
 #[async_trait]
 trait ChunkReading {
@@ -39,7 +62,7 @@ impl ChunkReading for ChunkReader {
     async fn read_plain_chunk(
         reader: Arc<Mutex<Box<dyn AsyncRead + Unpin + Send + Sync>>>,
     ) -> anyhow::Result<Option<Vec<u8>>> {
-        let chunk_size: u64 = 256;
+        let chunk_size: u64 = CHUNK_SIZE;
         let mut buf: Vec<u8> = Vec::with_capacity(chunk_size as usize);
         let bytes_read = reader.lock().await.read_buf(&mut buf).await?;
         if bytes_read > 0 {
@@ -75,25 +98,6 @@ impl ChunkReading for ChunkReader {
     }
 }
 
-#[async_trait]
-impl ChunkWriting for ChunkWriter {
-    async fn write_plain_chunk(
-        writer: Arc<Mutex<Box<dyn AsyncWrite + Unpin + Send + Sync>>>,
-        chunk: Vec<u8>,
-    ) -> anyhow::Result<()> {
-        writer.lock().await.write_all(&chunk).await?;
-        Ok(())
-    }
-
-    async fn write_encrypted_chunk(
-        writer: Arc<Mutex<Box<dyn AsyncWrite + Unpin + Send + Sync>>>,
-        chunk: Vec<u8>,
-    ) -> anyhow::Result<()> {
-        writer.lock().await.write_u32(chunk.len() as u32).await?;
-        writer.lock().await.write_all(&chunk).await?;
-        Ok(())
-    }
-}
 #[derive(Debug, Copy, Clone)]
 pub enum Action {
     Decrypt,
