@@ -181,17 +181,15 @@ async fn vault_decrypt<'a>(
         file_output,
         inplace,
         io::Action::Decrypt,
-        move |mut receiver, sender| {
+        move |cipher_package| {
             let pass = helper::get_password(&mut password, &password_file).unwrap();
             async move {
-                while let Ok(cipher_package) = receiver.recv().await {
-                    let plaintext = crypto::decrypt(SecStr::from(pass.clone()), cipher_package)
-                        .await?
-                        .unsecure()
-                        .to_vec();
-                    sender.send(plaintext).unwrap();
-                }
-                Ok::<(), anyhow::Error>(())
+                println!("decrypting");
+                let plaintext = crypto::decrypt(SecStr::from(pass.clone()), cipher_package)
+                    .await?
+                    .unsecure()
+                    .to_vec();
+                Ok::<Vec<u8>, anyhow::Error>(plaintext)
             }
         },
     )
@@ -209,40 +207,37 @@ async fn vault_edit<'a>(
         None,
         true,
         io::Action::Decrypt,
-        move |mut receiver, sender| {
+        move |cipher_package| {
             let pass = helper::get_password(&mut password, &password_file).unwrap();
             async move {
-                while let Ok(cipher_package) = receiver.recv().await {
-                    let plaintext = crypto::decrypt(SecStr::from(pass.clone()), cipher_package)
-                        .await?
-                        .unsecure()
-                        .to_vec();
+                let plaintext = crypto::decrypt(SecStr::from(pass.clone()), cipher_package)
+                    .await?
+                    .unsecure()
+                    .to_vec();
 
-                    let editor_cmd = env::var("EDITOR").unwrap_or("vim".to_string());
-                    let editor = helper::which(&editor_cmd)
-                        .with_context(|| format!("no pager was found"))?;
+                let editor_cmd = env::var("EDITOR").unwrap_or("vim".to_string());
+                let editor =
+                    helper::which(&editor_cmd).with_context(|| format!("no pager was found"))?;
 
-                    let mut tmp_file = tempfile::NamedTempFile::new()?;
-                    tmp_file.write_all(&plaintext)?;
+                let mut tmp_file = tempfile::NamedTempFile::new()?;
+                tmp_file.write_all(&plaintext)?;
 
-                    let mut editor_process = Command::new(editor)
-                        .arg(tmp_file.path())
-                        .spawn()
-                        .with_context(|| format!("error while spawning pager {}", editor_cmd))?;
-                    editor_process.wait()?;
+                let mut editor_process = Command::new(editor)
+                    .arg(tmp_file.path())
+                    .spawn()
+                    .with_context(|| format!("error while spawning pager {}", editor_cmd))?;
+                editor_process.wait()?;
 
-                    let mut changed_text: Vec<u8> = Vec::new();
-                    tmp_file.reopen()?.read_to_end(&mut changed_text)?;
+                let mut changed_text: Vec<u8> = Vec::new();
+                tmp_file.reopen()?.read_to_end(&mut changed_text)?;
 
-                    let cipher_package = crypto::encrypt(
-                        SecStr::from(pass.clone()),
-                        SecVec::from(changed_text.to_vec()),
-                    )
-                    .await;
-                    sender.send(cipher_package).unwrap();
-                    drop(tmp_file);
-                }
-                Ok::<(), anyhow::Error>(())
+                let cipher_package = crypto::encrypt(
+                    SecStr::from(pass.clone()),
+                    SecVec::from(changed_text.to_vec()),
+                )
+                .await;
+                drop(tmp_file);
+                Ok::<Vec<u8>, anyhow::Error>(cipher_package)
             }
         },
     )
@@ -262,18 +257,14 @@ async fn vault_encrypt<'a>(
         file_output,
         inplace,
         io::Action::Encrypt,
-        move |mut receiver, sender| {
+        move |plaintext| {
             let pass = helper::get_password(&mut password, &password_file).unwrap();
             async move {
-                while let Ok(plaintext) = receiver.recv().await {
-                    let ciphertext = crypto::encrypt(
-                        SecStr::from(pass.clone()),
-                        SecVec::new(plaintext.to_vec()),
-                    )
-                    .await;
-                    sender.send(ciphertext).unwrap();
-                }
-                Ok::<(), anyhow::Error>(())
+                println!("encrypting");
+                let ciphertext =
+                    crypto::encrypt(SecStr::from(pass.clone()), SecVec::new(plaintext.to_vec()))
+                        .await;
+                Ok::<Vec<u8>, anyhow::Error>(ciphertext)
             }
         },
     )
@@ -291,31 +282,28 @@ async fn vault_view<'a>(
         None,
         false,
         io::Action::Decrypt,
-        move |mut receiver, sender| {
+        move |cipher_package| {
             let pass = helper::get_password(&mut password, &password_file).unwrap();
             async move {
-                while let Ok(cipher_package) = receiver.recv().await {
-                    let plain_bytes = crypto::decrypt(SecStr::from(pass.clone()), cipher_package)
-                        .await?
-                        .unsecure()
-                        .to_vec();
-                    let plaintext = String::from_utf8(plain_bytes)?;
+                let plain_bytes = crypto::decrypt(SecStr::from(pass.clone()), cipher_package)
+                    .await?
+                    .unsecure()
+                    .to_vec();
+                let plaintext = String::from_utf8(plain_bytes)?;
 
-                    let pager_cmd = env::var("PAGER").unwrap_or("less".to_string());
-                    let pager =
-                        helper::which(&pager_cmd).with_context(|| format!("no pager was found"))?;
+                let pager_cmd = env::var("PAGER").unwrap_or("less".to_string());
+                let pager =
+                    helper::which(&pager_cmd).with_context(|| format!("no pager was found"))?;
 
-                    let mut pager_process = Command::new(pager)
-                        .stdin(Stdio::piped())
-                        .spawn()
-                        .with_context(|| format!("error while spawning pager {}", pager_cmd))?;
+                let mut pager_process = Command::new(pager)
+                    .stdin(Stdio::piped())
+                    .spawn()
+                    .with_context(|| format!("error while spawning pager {}", pager_cmd))?;
 
-                    let pager_stdin = pager_process.stdin.as_mut().unwrap();
-                    write!(pager_stdin, "{}", plaintext)?;
-                    pager_process.wait()?;
-                    sender.send(Vec::new()).unwrap();
-                }
-                Ok(())
+                let pager_stdin = pager_process.stdin.as_mut().unwrap();
+                write!(pager_stdin, "{}", plaintext)?;
+                pager_process.wait()?;
+                Ok::<Vec<u8>, anyhow::Error>(Vec::new())
             }
         },
     )

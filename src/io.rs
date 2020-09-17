@@ -1,9 +1,37 @@
 use anyhow::Context;
+use async_trait::async_trait;
 use futures::future::Future;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tokio::fs::{self, File};
 use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::sync::broadcast::{self, Receiver, Sender};
+use tokio::sync::Mutex;
+
+struct ChunkReader;
+#[async_trait]
+trait ChunkReading {
+    async fn read_plain_chunk(
+        reader: Arc<Mutex<Box<dyn AsyncRead + Unpin + Send + Sync>>>,
+    ) -> anyhow::Result<Option<Vec<u8>>>;
+
+    async fn read_encrypted_chunk(
+        reader: Arc<Mutex<Box<dyn AsyncRead + Unpin + Send + Sync>>>,
+    ) -> anyhow::Result<Option<Vec<u8>>>;
+}
+
+struct ChunkWriter;
+#[async_trait]
+trait ChunkWriting {
+    async fn write_plain_chunk(
+        writer: Arc<Mutex<Box<dyn AsyncWrite + Unpin + Send + Sync>>>,
+        chunk: Vec<u8>,
+    ) -> anyhow::Result<()>;
+
+    async fn write_encrypted_chunk(
+        writer: Arc<Mutex<Box<dyn AsyncWrite + Unpin + Send + Sync>>>,
+        chunk: Vec<u8>,
+    ) -> anyhow::Result<()>;
+}
 
 #[derive(Debug, Copy, Clone)]
 pub enum Action {
@@ -24,15 +52,15 @@ pub async fn read_process_write<'a, F: Send + Sync + 'static, R: Send + Sync + '
     mut fn_process: F,
 ) -> anyhow::Result<()>
 where
-    F: FnMut(Receiver<Vec<u8>>, Sender<Vec<u8>>) -> R,
-    R: Future<Output = anyhow::Result<()>> + Send + Sync,
+    F: FnMut(Vec<u8>) -> R,
+    R: Future<Output = anyhow::Result<Vec<u8>>> + Send + Sync,
 {
     let do_inplace = if file == outfile { true } else { inplace };
     // for inplace encryption we actually have to use a temporary file
     let mut temporary_file: Option<PathBuf> = None;
 
     // create the reader
-    let mut reader: Box<dyn AsyncRead + Unpin + Send + Sync> = match file {
+    let reader: Box<dyn AsyncRead + Unpin + Send + Sync> = match file {
         // the reader is a file if a path is given
         Some(path) => {
             let f = File::open(path.clone())
@@ -74,29 +102,23 @@ where
         _ => None,
     };
 
-    // loop until fn_read returns an empty buffer
-    let mut writer = writer.unwrap();
-    let (from_reader, to_process) = broadcast::channel(10);
-    let (from_process, to_writer) = broadcast::channel(10);
+    let writer = Arc::new(Mutex::new(writer.unwrap()));
+    let reader = Arc::new(Mutex::new(reader));
 
-    tokio::spawn(async move {
-        match action {
-            Action::Decrypt => read_encryped_chunk(&mut reader, from_reader).await?,
-            Action::Encrypt => read_plain_chunk(&mut reader, from_reader).await?,
-        };
-        Ok::<(), anyhow::Error>(())
-    })
-    .await??;
-
-    tokio::spawn(async move {
-        fn_process(to_process, from_process).await?;
-        Ok::<(), anyhow::Error>(())
-    });
-
-    match action {
-        Action::Decrypt => write_plain_chunk(&mut writer, to_writer).await?,
-        Action::Encrypt => write_encrypted_chunk(&mut writer, to_writer).await?,
+    let fn_read = match action {
+        Action::Decrypt => ChunkReader::read_encrypted_chunk,
+        Action::Encrypt => ChunkReader::read_plain_chunk,
     };
+
+    let fn_write = match action {
+        Action::Decrypt => ChunkWriter::write_plain_chunk,
+        Action::Encrypt => ChunkWriter::write_encrypted_chunk,
+    };
+
+    while let Some(chunk) = fn_read(Arc::clone(&reader)).await? {
+        let processed_chunk = fn_process(chunk).await?;
+        fn_write(Arc::clone(&writer), processed_chunk);
+    }
 
     // if a temporary file was used for an inplace operation we have to rename
     // the temporary file to the actual input file
@@ -114,66 +136,63 @@ where
     Ok(())
 }
 
-pub async fn read_plain_chunk(
-    reader: &mut (dyn AsyncRead + Unpin + Send),
-    sender: Sender<Vec<u8>>,
-) -> anyhow::Result<()> {
-    let chunk_size: u64 = 256;
-    loop {
+#[async_trait]
+impl ChunkReading for ChunkReader {
+    async fn read_plain_chunk(
+        reader: Arc<Mutex<Box<dyn AsyncRead + Unpin + Send + Sync>>>,
+    ) -> anyhow::Result<Option<Vec<u8>>> {
+        let chunk_size: u64 = 256;
         let mut buf: Vec<u8> = Vec::with_capacity(chunk_size as usize);
-        let bytes_read = reader.take(chunk_size).read_to_end(&mut buf).await?;
-        if bytes_read == 0 {
-            break;
+        let bytes_read = reader.lock().await.read(&mut buf).await?;
+        if bytes_read > 0 {
+            Ok(Some(buf))
+        } else {
+            Ok(None)
         }
-        sender.send(buf).unwrap();
     }
-    Ok(())
-}
 
-pub async fn read_encryped_chunk(
-    reader: &mut (dyn AsyncRead + Unpin + Send),
-    sender: Sender<Vec<u8>>,
-) -> anyhow::Result<()> {
-    loop {
-        let chunk_size = match reader.read_u32().await {
+    async fn read_encrypted_chunk(
+        reader: Arc<Mutex<Box<dyn AsyncRead + Unpin + Send + Sync>>>,
+    ) -> anyhow::Result<Option<Vec<u8>>> {
+        let chunk_size = match reader.lock().await.read_u32().await {
             Ok(n) => n,
-            Err(_) => return Ok(()),
+            Err(_) => return Ok(None),
         };
         let mut buf: Vec<u8> = Vec::with_capacity(chunk_size as usize);
         // now reading the actual chunk
         let bytes_read = reader
-            .take(chunk_size as u64)
-            .read_to_end(&mut buf)
+            .lock()
+            .await
+            .read(&mut buf)
             .await
             .with_context(|| format!("Error reading encrypted file"))?;
-        if bytes_read == 0 {
-            break;
-        }
         if bytes_read < chunk_size as usize {
             return Err(anyhow::anyhow!("could not read entire data chunk"));
         }
-        sender.send(buf).unwrap();
+        if bytes_read > 0 {
+            Ok(Some(buf))
+        } else {
+            Ok(None)
+        }
     }
-    Ok(())
 }
 
-pub async fn write_plain_chunk(
-    writer: &mut (dyn AsyncWrite + Unpin + Send),
-    mut receiver: Receiver<Vec<u8>>,
-) -> anyhow::Result<()> {
-    while let Ok(chunk) = receiver.recv().await {
-        writer.write_all(&chunk).await?;
+#[async_trait]
+impl ChunkWriting for ChunkWriter {
+    async fn write_plain_chunk(
+        writer: Arc<Mutex<Box<dyn AsyncWrite + Unpin + Send + Sync>>>,
+        chunk: Vec<u8>,
+    ) -> anyhow::Result<()> {
+        writer.lock().await.write_all(&chunk).await?;
+        Ok(())
     }
-    Ok(())
-}
 
-pub async fn write_encrypted_chunk(
-    writer: &mut (dyn AsyncWrite + Unpin + Send),
-    mut receiver: Receiver<Vec<u8>>,
-) -> anyhow::Result<()> {
-    while let Ok(chunk) = receiver.recv().await {
-        writer.write_u32(chunk.len() as u32).await?;
-        writer.write_all(&chunk).await?;
+    async fn write_encrypted_chunk(
+        writer: Arc<Mutex<Box<dyn AsyncWrite + Unpin + Send + Sync>>>,
+        chunk: Vec<u8>,
+    ) -> anyhow::Result<()> {
+        writer.lock().await.write_u32(chunk.len() as u32).await?;
+        writer.lock().await.write_all(&chunk).await?;
+        Ok(())
     }
-    Ok(())
 }
