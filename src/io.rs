@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs::{self, File};
 use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 
 struct ChunkReader;
@@ -104,7 +105,7 @@ pub enum Action {
 // 2. apply a function on the data (encrypt or decrypt)
 // 3. write to a file or stdout
 // This function encapsulates this reoccurring procedure
-pub async fn read_process_write<'a, F: Send + Sync + 'static, R: Send + Sync + 'a>(
+pub async fn read_process_write<'a, F: Send + Sync + 'static, R: Send + Sync + 'static>(
     file: Option<&'a Path>,
     outfile: Option<&'a Path>,
     inplace: bool,
@@ -175,9 +176,20 @@ where
         Action::Encrypt => ChunkWriter::write_encrypted_chunk,
     };
 
-    while let Some(chunk) = fn_read(Arc::clone(&reader)).await? {
-        let processed_chunk = fn_process(chunk).await?;
-        fn_write(Arc::clone(&writer), processed_chunk).await?;
+    let (mut tx, mut rx) = mpsc::channel(100);
+    // start processing the file
+    tokio::spawn(async move {
+        while let Some(chunk) = fn_read(Arc::clone(&reader)).await? {
+            if let Err(_) = tx.send(fn_process(chunk)).await {
+                return Err(anyhow::anyhow!("could not write to disk"));
+            }
+        }
+        Ok::<(), anyhow::Error>(())
+    });
+
+    // start writing the results while still processing
+    while let Some(chunk_in_progress) = rx.recv().await {
+        fn_write(Arc::clone(&writer), chunk_in_progress.await?).await?;
     }
 
     // if a temporary file was used for an inplace operation we have to rename
