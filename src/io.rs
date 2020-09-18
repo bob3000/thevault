@@ -1,10 +1,8 @@
 use anyhow::Context;
 use async_trait::async_trait;
 use futures::future::Future;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokio::fs::{self, File};
-use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 
@@ -131,6 +129,7 @@ impl ChunkWriting for ChunkWriter {
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum Action {
     Decrypt,
+    DecryptB64,
     Encrypt,
     EncryptB64,
 }
@@ -141,82 +140,38 @@ pub enum Action {
 // 3. write to a file or stdout
 // This function encapsulates this reoccurring procedure
 pub async fn read_process_write<'a, F: Send + Sync + 'static, R: Send + Sync + 'static>(
-    file: Option<&'a Path>,
-    outfile: Option<&'a Path>,
-    inplace: bool,
+    reader: Box<dyn AsyncRead + Unpin + Send + Sync>,
+    writer: Box<dyn AsyncWrite + Unpin + Send + Sync>,
     action: Action,
     mut fn_process: F,
-) -> anyhow::Result<()>
+) -> anyhow::Result<Action>
 where
     F: FnMut(Vec<u8>) -> R,
     R: Future<Output = anyhow::Result<Vec<u8>>> + Send + Sync,
 {
-    let do_inplace = if file == outfile { true } else { inplace };
-    // for inplace encryption we actually have to use a temporary file
-    let mut temporary_file: Option<PathBuf> = None;
-
-    // create the reader
-    let reader: Box<dyn AsyncRead + Unpin + Send + Sync> = match file {
-        // the reader is a file if a path is given
-        Some(path) => {
-            let f = File::open(path.clone())
-                .await
-                .with_context(|| format!("failed to open input file {}", path.to_str().unwrap()))?;
-            Box::new(f)
-        }
-        // if no path is given the reader will be stdin
-        None => Box::new(io::stdin()),
-    };
-
-    // create the writer
-    let writer: Option<Box<dyn AsyncWrite + Unpin + Send + Sync>> = match outfile {
-        // the writer is a new file if a path is given and we're not working inplace
-        Some(path) if !do_inplace => {
-            let f = File::create(path.clone()).await.with_context(|| {
-                format!("failed to create output file {}", path.to_str().unwrap())
-            })?;
-            Some(Box::new(f))
-        }
-        None => {
-            // if we're working inplace the writer is a new temporary file
-            if do_inplace && file.is_some() {
-                let mut tmp_file = file.unwrap().clone().to_owned();
-                tmp_file.set_extension("tmp");
-                let f = File::create(tmp_file.as_path()).await.with_context(|| {
-                    format!(
-                        "failed to create temporary file {}",
-                        tmp_file.as_path().to_str().unwrap()
-                    )
-                })?;
-                temporary_file = Some(tmp_file);
-                Some(Box::new(f))
-            // if no path was given the writer is stdout
-            } else {
-                Some(Box::new(io::stdout()))
-            }
-        }
-        _ => None,
-    };
-
-    let writer = Arc::new(Mutex::new(writer.unwrap()));
+    let writer = Arc::new(Mutex::new(writer));
     let reader = Arc::new(Mutex::new(reader));
 
+    let mut action_performed = action;
     let fn_read = match action {
         Action::Decrypt => {
             let mut marker = Vec::with_capacity(BASE64_MARKER.len());
             reader.lock().await.read_buf(&mut marker).await?;
             if marker == BASE64_MARKER {
+                action_performed = Action::DecryptB64;
                 ChunkReader::read_encrypted_b64_chunk
             } else {
                 ChunkReader::read_encrypted_chunk
             }
         }
+        Action::DecryptB64 => ChunkReader::read_encrypted_b64_chunk,
         Action::Encrypt => ChunkReader::read_plain_chunk,
         Action::EncryptB64 => ChunkReader::read_plain_chunk,
     };
 
     let fn_write = match action {
         Action::Decrypt => ChunkWriter::write_plain_chunk,
+        Action::DecryptB64 => ChunkWriter::write_plain_chunk,
         Action::Encrypt => {
             writer
                 .lock()
@@ -253,18 +208,5 @@ where
         fn_write(Arc::clone(&writer), chunk_in_progress.await?).await?;
     }
 
-    // if a temporary file was used for an inplace operation we have to rename
-    // the temporary file to the actual input file
-    if temporary_file.is_some() && file.is_some() {
-        fs::rename(temporary_file.unwrap(), file.unwrap())
-            .await
-            .with_context(|| {
-                format!(
-                    "failed to replace {} with temporary file",
-                    file.unwrap().to_str().unwrap()
-                )
-            })?;
-    }
-
-    Ok(())
+    Ok(action_performed)
 }

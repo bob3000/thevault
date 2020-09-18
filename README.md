@@ -131,7 +131,7 @@ Simple is better than complex.
 Complex is better than complicated.
 END
 
-❯ thevault encrypt -i -f zen.aes
+❯ thevault encrypt -b -i -f zen.aes
 Password:
 
 ❯ cat zen.aes
