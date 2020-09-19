@@ -175,7 +175,6 @@ async fn vault_decrypt<'a>(
     file_output: Option<&'a Path>,
     mut password: Option<String>,
     password_file: Option<PathBuf>,
-    inplace: bool,
 ) -> anyhow::Result<io::Action> {
     let pass = helper::get_password(&mut password, &password_file).unwrap();
     let mut reader = helper::get_reader(file_input).await?;
@@ -211,7 +210,6 @@ async fn vault_edit<'a>(
         Some(tmp_file.path()),
         password.clone(),
         password_file.clone(),
-        false,
     )
     .await?;
 
@@ -231,7 +229,6 @@ async fn vault_edit<'a>(
         Some(file_input),
         password,
         password_file,
-        false,
         b64,
     )
     .await?;
@@ -243,7 +240,6 @@ async fn vault_encrypt<'a>(
     file_output: Option<&'a Path>,
     mut password: Option<String>,
     password_file: Option<PathBuf>,
-    inplace: bool,
     base64: bool,
 ) -> anyhow::Result<io::Action> {
     let pass = helper::get_password(&mut password, &password_file).unwrap();
@@ -335,12 +331,6 @@ enum Opt {
             help = "Path to file storing the decryption password"
         )]
         password_file: Option<PathBuf>,
-        #[structopt(
-            long,
-            short,
-            help = "Wether to write to decrypted message to the source file"
-        )]
-        inplace: bool,
     },
     /// Opens an encrypted file in the default editor
     Edit {
@@ -398,12 +388,6 @@ enum Opt {
         #[structopt(
             long,
             short,
-            help = "Wether to write to encrypted message to the source file"
-        )]
-        inplace: bool,
-        #[structopt(
-            long,
-            short,
             help = "Write out the encrypted message as base64 encoded string"
         )]
         base64: bool,
@@ -440,17 +424,7 @@ async fn main() -> anyhow::Result<()> {
             outfile,
             password,
             password_file,
-            inplace,
-        } => {
-            vault_decrypt(
-                file.as_deref(),
-                outfile.as_deref(),
-                password,
-                password_file,
-                inplace,
-            )
-            .await?
-        }
+        } => vault_decrypt(file.as_deref(), outfile.as_deref(), password, password_file).await?,
         Opt::Edit {
             file,
             password,
@@ -461,7 +435,6 @@ async fn main() -> anyhow::Result<()> {
             outfile,
             password,
             password_file,
-            inplace,
             base64,
         } => {
             vault_encrypt(
@@ -469,7 +442,6 @@ async fn main() -> anyhow::Result<()> {
                 outfile.as_deref(),
                 password,
                 password_file,
-                inplace,
                 base64,
             )
             .await?
@@ -552,7 +524,6 @@ mod tests {
             Some(file_output.path()),
             Some(password.clone()),
             None,
-            false,
             true,
         )
         .await
@@ -566,7 +537,6 @@ mod tests {
             Some(file_decrypted.path()),
             Some(password),
             None,
-            false,
         )
         .await
         .expect("error vault encryption");
