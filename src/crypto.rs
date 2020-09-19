@@ -88,8 +88,6 @@ impl Crypto {
 
         // build package
         let mut result: Vec<u8> = Vec::new();
-        result.extend(self.salt.clone());
-        result.extend(self.init_vec.clone());
         result.extend(checksum);
         result.extend(ciphertext);
         result
@@ -133,17 +131,30 @@ mod test {
         let password = SecVec::from("0123456789ABCDEF0123456789ABCDEF");
         let message = SecVec::from("this is a very secret message!!!");
         let mut cipher_package = Cursor::new(Vec::new());
+
+        // encrypt
         let c = Crypto::new_encrypter(&password, &mut cipher_package)
             .await
             .expect("error creating encrypter");
+
         let ciphertext = c.encrypt(message.clone()).await;
         assert_ne!(&message.unsecure()[..], &ciphertext[..]);
+        cipher_package
+            .write_u32(ciphertext.len() as u32)
+            .await
+            .unwrap();
         cipher_package.write_all(&ciphertext).await.unwrap();
         cipher_package.set_position(0);
+
+        // decrypt
         let d = Crypto::new_decrypter(&password, &mut cipher_package)
             .await
             .expect("error creating crypto from cipher package");
-        let decrypted_text = d.decrypt(&ciphertext).await.unwrap();
+
+        let chunk_size = cipher_package.read_u32().await.unwrap();
+        let mut buf: Vec<u8> = Vec::with_capacity(chunk_size as usize);
+        cipher_package.read_buf(&mut buf).await.unwrap();
+        let decrypted_text = d.decrypt(&buf).await.unwrap();
         assert_eq!(&message.unsecure(), &decrypted_text.unsecure());
     }
 
