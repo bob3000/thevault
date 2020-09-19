@@ -83,17 +83,17 @@ struct ChunkWriter;
 #[async_trait]
 trait ChunkWriting {
     async fn write_plain_chunk(
-        writer: Arc<Mutex<Box<dyn AsyncWrite + Unpin + Send + Sync>>>,
+        writer: Arc<Mutex<&mut (dyn AsyncWrite + Unpin + Send + Sync)>>,
         chunk: Vec<u8>,
     ) -> anyhow::Result<()>;
 
     async fn write_encrypted_chunk(
-        writer: Arc<Mutex<Box<dyn AsyncWrite + Unpin + Send + Sync>>>,
+        writer: Arc<Mutex<&mut (dyn AsyncWrite + Unpin + Send + Sync)>>,
         chunk: Vec<u8>,
     ) -> anyhow::Result<()>;
 
     async fn write_encrypted_b64_chunk(
-        writer: Arc<Mutex<Box<dyn AsyncWrite + Unpin + Send + Sync>>>,
+        writer: Arc<Mutex<&mut (dyn AsyncWrite + Unpin + Send + Sync)>>,
         chunk: Vec<u8>,
     ) -> anyhow::Result<()>;
 }
@@ -101,7 +101,7 @@ trait ChunkWriting {
 #[async_trait]
 impl ChunkWriting for ChunkWriter {
     async fn write_plain_chunk(
-        writer: Arc<Mutex<Box<dyn AsyncWrite + Unpin + Send + Sync>>>,
+        writer: Arc<Mutex<&mut (dyn AsyncWrite + Unpin + Send + Sync)>>,
         chunk: Vec<u8>,
     ) -> anyhow::Result<()> {
         writer.lock().await.write_all(&chunk).await?;
@@ -109,7 +109,7 @@ impl ChunkWriting for ChunkWriter {
     }
 
     async fn write_encrypted_chunk(
-        writer: Arc<Mutex<Box<dyn AsyncWrite + Unpin + Send + Sync>>>,
+        writer: Arc<Mutex<&mut (dyn AsyncWrite + Unpin + Send + Sync)>>,
         chunk: Vec<u8>,
     ) -> anyhow::Result<()> {
         writer.lock().await.write_u32(chunk.len() as u32).await?;
@@ -118,7 +118,7 @@ impl ChunkWriting for ChunkWriter {
     }
 
     async fn write_encrypted_b64_chunk(
-        writer: Arc<Mutex<Box<dyn AsyncWrite + Unpin + Send + Sync>>>,
+        writer: Arc<Mutex<&mut (dyn AsyncWrite + Unpin + Send + Sync)>>,
         chunk: Vec<u8>,
     ) -> anyhow::Result<()> {
         let chunk = base64::encode(chunk).as_bytes().to_vec();
@@ -139,9 +139,9 @@ pub enum Action {
 // 2. apply a function on the data (encrypt or decrypt)
 // 3. write to a file or stdout
 // This function encapsulates this reoccurring procedure
-pub async fn read_process_write<'a, F: Send + Sync + 'static, R: Send + Sync + 'static>(
+pub async fn read_process_write<F: Send + Sync + 'static, R: Send + Sync + 'static>(
     reader: Box<dyn AsyncRead + Unpin + Send + Sync>,
-    writer: Box<dyn AsyncWrite + Unpin + Send + Sync>,
+    writer: &mut (dyn AsyncWrite + Unpin + Send + Sync),
     action: Action,
     mut fn_process: F,
 ) -> anyhow::Result<Action>

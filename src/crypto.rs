@@ -132,13 +132,13 @@ mod test {
     async fn successful_encrypt_decrypt() {
         let password = SecVec::from("0123456789ABCDEF0123456789ABCDEF");
         let message = SecVec::from("this is a very secret message!!!");
-        let cipher_package = Cursor::new(Vec::new());
+        let mut cipher_package = Cursor::new(Vec::new());
         let c = Crypto::new_encrypter(&password, &mut cipher_package)
             .await
             .expect("error creating encrypter");
         let ciphertext = c.encrypt(message.clone()).await;
         assert_ne!(&message.unsecure()[..], &ciphertext[..]);
-        cipher_package.write_all(&ciphertext);
+        cipher_package.write_all(&ciphertext).await.unwrap();
         cipher_package.set_position(0);
         let d = Crypto::new_decrypter(&password, &mut cipher_package)
             .await
@@ -150,7 +150,7 @@ mod test {
     #[tokio::test]
     async fn incomplete_package() {
         let password = SecVec::from("0123456789ABCDEF0123456789ABCDEF");
-        let cipher_package = Cursor::new(Vec::from("0123456789ABCDEF"));
+        let mut cipher_package = Cursor::new(Vec::from("0123456789ABCDEF"));
         let decryption_err = Crypto::new_decrypter(&password, &mut cipher_package)
             .await
             .unwrap_err();
@@ -164,13 +164,13 @@ mod test {
     async fn invalid_checksum() {
         let password = SecVec::from("0123456789ABCDEF0123456789ABCDEF");
         let message = SecVec::from("this is a very secret message!!!");
-        let cipher_package = Cursor::new(Vec::new());
+        let mut cipher_package = Cursor::new(Vec::new());
         let c = Crypto::new_encrypter(&password, &mut cipher_package)
             .await
             .expect("could not create encryptor");
         let ciphertext = c.encrypt(message.clone()).await;
         assert_ne!(&message.unsecure()[..], &ciphertext[..]);
-        cipher_package.write_all(&ciphertext);
+        cipher_package.write_all(&ciphertext).await.unwrap();
         let end = ciphertext.len() - 4;
         let decryption_err = c.decrypt(&ciphertext[..end]).await.unwrap_err();
         assert_eq!(decryption_err.to_string(), "HMAC verification failed");

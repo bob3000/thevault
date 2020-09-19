@@ -179,33 +179,29 @@ async fn vault_decrypt<'a>(
 ) -> anyhow::Result<io::Action> {
     let pass = helper::get_password(&mut password, &password_file).unwrap();
     let mut reader = helper::get_reader(file_input).await?;
-    let writer = helper::get_writer(file_output).await?;
+    let mut writer = helper::get_writer(file_output).await?;
     let decrypter = crypto::Crypto::new_decrypter(&pass, reader.as_mut()).await?;
-    let action_performed =
-        io::read_process_write(reader, writer, io::Action::Decrypt, move |cipher_package| {
+    let action_performed = io::read_process_write(
+        reader,
+        &mut writer,
+        io::Action::Decrypt,
+        move |cipher_package| {
             let cpt = decrypter.clone();
             async move {
                 let plaintext = cpt.decrypt(&cipher_package).await?.unsecure().to_vec();
                 Ok::<Vec<u8>, anyhow::Error>(plaintext)
             }
-        })
-        .await?;
+        },
+    )
+    .await?;
     Ok::<io::Action, anyhow::Error>(action_performed)
 }
 
 async fn vault_edit<'a>(
     file_input: &'a Path,
-    mut password: Option<String>,
+    password: Option<String>,
     password_file: Option<PathBuf>,
 ) -> anyhow::Result<io::Action> {
-    let pass = helper::get_password(&mut password, &password_file).unwrap();
-
-    let mut reader = helper::get_reader(Some(file_input)).await?;
-    let mut writer = helper::get_writer(None).await?;
-
-    let decrypter = crypto::Crypto::new_decrypter(&pass, reader.as_mut()).await?;
-    let encrypter = crypto::Crypto::new_encrypter(&pass, writer.as_mut()).await?;
-
     let editor_cmd = env::var("EDITOR").unwrap_or("vim".to_string());
     let editor = helper::which(&editor_cmd).with_context(|| format!("no pager was found"))?;
     let tmp_file = tempfile::NamedTempFile::new()?;
@@ -259,7 +255,7 @@ async fn vault_encrypt<'a>(
     } else {
         io::Action::Encrypt
     };
-    io::read_process_write(reader, writer, encoding, move |plaintext| {
+    io::read_process_write(reader, &mut writer, encoding, move |plaintext| {
         let cpt = encrypter.clone();
         async move {
             let ciphertext = cpt.encrypt(SecVec::new(plaintext.to_vec())).await;
@@ -278,24 +274,23 @@ async fn vault_view<'a>(
     let pass = helper::get_password(&mut password, &password_file).unwrap();
     let pager_cmd = env::var("PAGER").unwrap_or("less".to_string());
     let pager = helper::which(&pager_cmd).with_context(|| format!("no pager was found"))?;
-    let pager_process = Command::new(pager)
+    let mut pager_process = Command::new(pager)
         .stdin(Stdio::piped())
         .spawn()
         .with_context(|| format!("error while spawning pager {}", pager_cmd))?;
-    let pager_stdin = Box::new(pager_process.stdin.unwrap());
 
     let mut reader = helper::get_reader(Some(file_input)).await?;
     let decrypter = crypto::Crypto::new_decrypter(&pass, reader.as_mut()).await?;
 
     let action_performed = io::read_process_write(
         reader,
-        &mut pager_stdin,
+        &mut pager_process.stdin.as_mut().unwrap(),
         io::Action::Decrypt,
         move |cipher_package| {
             let cpt = decrypter.clone();
             async move {
                 let plain_bytes = cpt.decrypt(&cipher_package).await?.unsecure().to_vec();
-                Ok::<Vec<u8>, anyhow::Error>(Vec::new())
+                Ok::<Vec<u8>, anyhow::Error>(plain_bytes)
             }
         },
     )
@@ -454,13 +449,13 @@ async fn main() -> anyhow::Result<()> {
                 password_file,
                 inplace,
             )
-            .await
+            .await?
         }
         Opt::Edit {
             file,
             password,
             password_file,
-        } => vault_edit(file.as_ref(), password, password_file).await,
+        } => vault_edit(file.as_ref(), password, password_file).await?,
         Opt::Encrypt {
             file,
             outfile,
@@ -477,13 +472,13 @@ async fn main() -> anyhow::Result<()> {
                 inplace,
                 base64,
             )
-            .await
+            .await?
         }
         Opt::View {
             file,
             password,
             password_file,
-        } => vault_view(file.as_ref(), password, password_file).await,
+        } => vault_view(file.as_ref(), password, password_file).await?,
     };
     Ok(())
 }
@@ -492,6 +487,7 @@ async fn main() -> anyhow::Result<()> {
 mod tests {
     use super::*;
     use std::fs;
+    use std::io::Write;
     use std::process::{Command, Stdio};
 
     #[test]
