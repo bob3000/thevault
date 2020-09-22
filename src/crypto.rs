@@ -10,12 +10,11 @@ use secstr::SecVec;
 use sha2::Sha256;
 use std::io;
 use thiserror::Error;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 type Aes256Cbc = block_modes::Cbc<Aes256, Iso7816>;
 type HmacSha256 = Hmac<Sha256>;
 
-const HEADER_LEN: usize = 32;
+pub const HEADER_LEN: usize = 32;
 
 #[derive(Debug, Clone)]
 pub struct Crypto {
@@ -25,10 +24,7 @@ pub struct Crypto {
 }
 
 impl Crypto {
-    pub async fn new_encrypter(
-        password: &SecVec<u8>,
-        output: &mut (dyn AsyncWrite + Unpin + Send + Sync),
-    ) -> anyhow::Result<Self> {
+    pub async fn new_encrypter(password: &SecVec<u8>) -> anyhow::Result<Self> {
         // generate random values
         let rng = thread_rng();
         let salt: Vec<u8> = Standard.sample_iter(rng).take(16).collect();
@@ -39,10 +35,6 @@ impl Crypto {
         let mut key = [0u8; 32];
         derived_key.expand(&[], &mut key).unwrap();
 
-        // write header
-        output.write_all(&salt).await?;
-        output.write_all(&init_vec).await?;
-
         Ok(Crypto {
             key,
             salt,
@@ -50,20 +42,11 @@ impl Crypto {
         })
     }
 
-    // let salt = header[..16].to_vec();
-    // let init_vec = header[16..32].to_vec();
     pub async fn new_decrypter(
         password: &SecVec<u8>,
-        cipher_package: &mut (dyn AsyncRead + Unpin + Send + Sync),
+        salt: Vec<u8>,
+        init_vec: Vec<u8>,
     ) -> anyhow::Result<Self, DecryptionError> {
-        let mut header = [0; HEADER_LEN];
-        let bytes_read = cipher_package.read(&mut header).await?;
-        if bytes_read < HEADER_LEN {
-            return Err(DecryptionError::InvalidCipherLength);
-        }
-        let salt = Vec::from(&header[..16]);
-        let init_vec = Vec::from(&header[16..32]);
-
         // derrive key
         let h = Hkdf::<Sha256>::new(Some(&salt), &password.unsecure()[..]);
         let mut key = [0u8; 32];
@@ -107,6 +90,21 @@ impl Crypto {
 
         Ok(SecVec::new(plaintext))
     }
+
+    pub fn header(&self) -> Vec<u8> {
+        let mut header = self.salt.clone();
+        header.append(&mut self.init_vec.clone());
+        header
+    }
+}
+
+// let salt = header[..16].to_vec();
+// let init_vec = header[16..32].to_vec();
+pub fn split_header(header: &[u8]) -> Result<(&[u8], &[u8]), DecryptionError> {
+    if header.len() != HEADER_LEN {
+        return Err(DecryptionError::InvalidCipherLength);
+    }
+    Ok((&header[..16], &header[16..]))
 }
 
 #[derive(Error, Debug)]
@@ -125,6 +123,7 @@ pub enum DecryptionError {
 mod test {
     use super::*;
     use std::io::Cursor;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[tokio::test]
     async fn successful_encrypt_decrypt() {
@@ -133,9 +132,10 @@ mod test {
         let mut cipher_package = Cursor::new(Vec::new());
 
         // encrypt
-        let c = Crypto::new_encrypter(&password, &mut cipher_package)
+        let c = Crypto::new_encrypter(&password)
             .await
             .expect("error creating encrypter");
+        cipher_package.write_all(&c.header()).await.unwrap();
 
         let ciphertext = c.encrypt(message.clone()).await;
         assert_ne!(&message.unsecure()[..], &ciphertext[..]);
@@ -147,7 +147,10 @@ mod test {
         cipher_package.set_position(0);
 
         // decrypt
-        let d = Crypto::new_decrypter(&password, &mut cipher_package)
+        let mut header = [0u8; HEADER_LEN];
+        cipher_package.read(&mut header).await.unwrap();
+        let (salt, init_vec) = split_header(&header).unwrap();
+        let d = Crypto::new_decrypter(&password, salt.to_vec(), init_vec.to_vec())
             .await
             .expect("error creating crypto from cipher package");
 
@@ -160,11 +163,8 @@ mod test {
 
     #[tokio::test]
     async fn incomplete_package() {
-        let password = SecVec::from("0123456789ABCDEF0123456789ABCDEF");
-        let mut cipher_package = Cursor::new(Vec::from("0123456789ABCDEF"));
-        let decryption_err = Crypto::new_decrypter(&password, &mut cipher_package)
-            .await
-            .unwrap_err();
+        let header = b"012345";
+        let decryption_err = split_header(&header[..]).unwrap_err();
         assert_eq!(
             decryption_err.to_string(),
             "cipher text does not contain all necessary elements"
@@ -176,9 +176,10 @@ mod test {
         let password = SecVec::from("0123456789ABCDEF0123456789ABCDEF");
         let message = SecVec::from("this is a very secret message!!!");
         let mut cipher_package = Cursor::new(Vec::new());
-        let c = Crypto::new_encrypter(&password, &mut cipher_package)
+        let c = Crypto::new_encrypter(&password)
             .await
             .expect("could not create encryptor");
+        cipher_package.write_all(&c.header()).await.unwrap();
         let ciphertext = c.encrypt(message.clone()).await;
         assert_ne!(&message.unsecure()[..], &ciphertext[..]);
         cipher_package.write_all(&ciphertext).await.unwrap();

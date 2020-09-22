@@ -7,7 +7,7 @@ encryption using passwords. All cryptographic actions rely on libraries from the
 
 ## Features
 
-- encrypt / decrypt a file inplace or to a different destination
+- encrypt / decrypt a files
 - view encrypted file
 - edit encrypted file
 - read password from password file, environment variable, command line parameter
@@ -47,7 +47,6 @@ USAGE:
 FLAGS:
     -b, --base64     Write out the encrypted message as base64 encoded string
     -h, --help       Prints help information
-    -i, --inplace    Wether to write to encrypted message to the source file
     -V, --version    Prints version information
 
 OPTIONS:
@@ -122,24 +121,7 @@ Password:
 79QhinA1CXegm9pRPdlkIlVWrPcX4qYIkYlAsyl2Y6CVN2A21B726rhe8bVbBk+kcDyivl7DTnq+5oUaR3TkNM8N4j2+4OCKeuihnQ7Vtv4I3WJ4IQueUJvmsoBbxuCFHVoMqGkbIdehS3CVdvovACqCGlAvH39yxh61Ds1Dp1ND8Uzkhe9JlM5wicQyy2PgSRqSvie1W7Wq732oJ1Jp9Xo7wWOAMQInLGa8+9bzIADdzJWuyTynJYo4Jn38NhlflG7B2iZ/2d6Zz2SDwJkzIQ==%
 ```
 
-### Encrypt a file inplace
-
-```sh
-❯ cat <<END > zen.aes
-Beautiful is better than ugly.
-Explicit is better than implicit.
-Simple is better than complex.
-Complex is better than complicated.
-END
-
-❯ thevault encrypt -i -f zen.aes
-Password:
-
-❯ cat zen.aes
-XHapWrX3GY0w7armyeN6deuASMvuAoUo+3D3njamKNq73s5kptnrwKvEfmVkvG4NDay+FTSAwDmYDFMKHpQBmnq0DPK84/pplnADK2Untfzizh9ykZxd/ZLk/yLve6x2zuExSR04Ww+itbYuk1kPGgyrCpsBFkxtI8TnRZxSzmzDzjHGus/H2Qa36F/gBRZS5inxqReCYkgLRKjree9+rP+Ms8XyLc0aJWI/FmD8cKQ71k+QeJ/4ch7pIFbQ4A+fCHqSJZju45IoJIoMHm6TEQ==%
-```
-
-### Decrypt a file to a different destination
+### Decrypt a file
 
 ```sh
 ❯ cat zen.aes
@@ -165,9 +147,38 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use structopt::StructOpt;
+use tokio::fs as tokio_fs;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::process::Command;
 
-// helper functions
+const BASE64_MARKER: &[u8] = b"THEVAULTB64";
+
+async fn fn_decrypt(
+    mut reader: Box<dyn AsyncRead + Unpin + Send + Sync>,
+    mut writer: &mut (dyn AsyncWrite + Unpin + Send + Sync),
+    pass: SecVec<u8>,
+) -> anyhow::Result<io::Action> {
+    let mut marker = Vec::with_capacity(BASE64_MARKER.len());
+    reader.read_buf(&mut marker).await?;
+    let action = if marker == BASE64_MARKER {
+        io::Action::DecryptB64
+    } else {
+        io::Action::Decrypt
+    };
+    let mut header = [0u8; crypto::HEADER_LEN];
+    reader.read(&mut header).await?;
+    let (salt, init_vec) = crypto::split_header(&header)?;
+    let decrypter = crypto::Crypto::new_decrypter(&pass, salt.to_vec(), init_vec.to_vec()).await?;
+    io::read_process_write(reader, &mut writer, action, move |cipher_package| {
+        let cpt = decrypter.clone();
+        async move {
+            let plaintext = cpt.decrypt(&cipher_package).await?.unsecure().to_vec();
+            Ok::<Vec<u8>, anyhow::Error>(plaintext)
+        }
+    })
+    .await?;
+    Ok(action)
+}
 
 // sub commands
 async fn vault_decrypt<'a>(
@@ -177,23 +188,11 @@ async fn vault_decrypt<'a>(
     password_file: Option<PathBuf>,
 ) -> anyhow::Result<io::Action> {
     let pass = helper::get_password(&mut password, &password_file).unwrap();
-    let mut reader = helper::get_reader(file_input).await?;
+    let reader = helper::get_reader(file_input).await?;
     let mut writer = helper::get_writer(file_output).await?;
-    let decrypter = crypto::Crypto::new_decrypter(&pass, reader.as_mut()).await?;
-    let action_performed = io::read_process_write(
-        reader,
-        &mut writer,
-        io::Action::Decrypt,
-        move |cipher_package| {
-            let cpt = decrypter.clone();
-            async move {
-                let plaintext = cpt.decrypt(&cipher_package).await?.unsecure().to_vec();
-                Ok::<Vec<u8>, anyhow::Error>(plaintext)
-            }
-        },
-    )
-    .await?;
-    Ok::<io::Action, anyhow::Error>(action_performed)
+
+    let action_performed = fn_decrypt(reader, &mut writer, pass).await?;
+    Ok(action_performed)
 }
 
 async fn vault_edit<'a>(
@@ -245,12 +244,28 @@ async fn vault_encrypt<'a>(
     let pass = helper::get_password(&mut password, &password_file).unwrap();
     let reader = helper::get_reader(file_input).await?;
     let mut writer = helper::get_writer(file_output).await?;
-    let encrypter = crypto::Crypto::new_encrypter(&pass, writer.as_mut()).await?;
+    let encrypter = crypto::Crypto::new_encrypter(&pass).await?;
+
+    // write header
     let encoding = if base64 {
+        writer
+            .write_all(BASE64_MARKER)
+            .await
+            .with_context(|| format!("could not write to output, aborting ..."))?;
+        writer
+            .write(base64::encode(encrypter.header()).as_bytes())
+            .await?;
         io::Action::EncryptB64
     } else {
+        writer
+            .write_all(&vec![0u8; BASE64_MARKER.len()])
+            .await
+            .with_context(|| format!("could not write to output, aborting ..."))?;
+        writer.write_all(&encrypter.header()).await?;
         io::Action::Encrypt
     };
+
+    // start data processing
     io::read_process_write(reader, &mut writer, encoding, move |plaintext| {
         let cpt = encrypter.clone();
         async move {
@@ -275,22 +290,12 @@ async fn vault_view<'a>(
         .spawn()
         .with_context(|| format!("error while spawning pager {}", pager_cmd))?;
 
-    let mut reader = helper::get_reader(Some(file_input)).await?;
-    let decrypter = crypto::Crypto::new_decrypter(&pass, reader.as_mut()).await?;
+    let reader = tokio_fs::File::open(file_input)
+        .await
+        .with_context(|| format!("failed to open input file {}", file_input.to_str().unwrap()))?;
+    let mut writer = &mut pager_process.stdin.as_mut().unwrap();
 
-    let action_performed = io::read_process_write(
-        reader,
-        &mut pager_process.stdin.as_mut().unwrap(),
-        io::Action::Decrypt,
-        move |cipher_package| {
-            let cpt = decrypter.clone();
-            async move {
-                let plain_bytes = cpt.decrypt(&cipher_package).await?.unsecure().to_vec();
-                Ok::<Vec<u8>, anyhow::Error>(plain_bytes)
-            }
-        },
-    )
-    .await?;
+    let action_performed = fn_decrypt(Box::new(reader), &mut writer, pass).await?;
     pager_process.wait_with_output().await?;
     Ok(action_performed)
 }
