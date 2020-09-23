@@ -30,11 +30,15 @@ impl ChunkReading for ChunkReader {
     async fn read_plain_chunk(
         reader: Arc<Mutex<Box<dyn AsyncRead + Unpin + Send + Sync>>>,
     ) -> anyhow::Result<Option<Vec<u8>>> {
-        let chunk_size: u64 = CHUNK_SIZE;
-        let mut buf: Vec<u8> = Vec::with_capacity(chunk_size as usize);
-        let bytes_read = reader.lock().await.read_buf(&mut buf).await?;
+        let mut buf = vec![0u8; CHUNK_SIZE as usize];
+        let bytes_read = reader
+            .lock()
+            .await
+            .read_buf(&mut buf)
+            .await
+            .with_context(|| format!("Error reading encrypted file"))?;
         if bytes_read > 0 {
-            Ok(Some(buf.to_vec()))
+            Ok(Some(buf[bytes_read..].to_vec()))
         } else {
             Ok(None)
         }
@@ -52,12 +56,12 @@ impl ChunkReading for ChunkReader {
         let bytes_read = reader
             .lock()
             .await
-            .read_exact(&mut buf)
+            .read_buf(&mut buf)
             .await
-            .with_context(|| format!("]Error reading encrypted file"))?;
+            .with_context(|| format!("Error reading encrypted file"))?;
 
         if bytes_read > 0 {
-            Ok(Some(buf))
+            Ok(Some(buf[bytes_read..].to_vec()))
         } else {
             Ok(None)
         }
@@ -167,7 +171,6 @@ where
     // start processing the file
     tokio::spawn(async move {
         while let Some(chunk) = fn_read(Arc::clone(&reader)).await? {
-            // println!("chunk read {:x?}", chunk);
             if let Err(_) = tx.send(fn_process(chunk)).await {
                 return Err(anyhow::anyhow!("could not write to disk"));
             }
@@ -178,7 +181,6 @@ where
     // start writing the results while still processing
     while let Some(chunk_in_progress) = rx.recv().await {
         let chunk = chunk_in_progress.await?;
-        // println!("chunk: {:x?}", chunk);
         fn_write(Arc::clone(&writer), chunk).await?;
     }
 
