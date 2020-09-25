@@ -8,27 +8,28 @@ use tokio::sync::Mutex;
 
 // Size of a chunks being read from the input source
 const CHUNK_SIZE: u64 = 1024;
+pub type BoxAsyncReader = Box<dyn AsyncRead + Unpin + Send + Sync>;
 
 struct ChunkReader;
 #[async_trait]
 trait ChunkReading {
     async fn read_plain_chunk(
-        reader: Arc<Mutex<Box<dyn AsyncRead + Unpin + Send + Sync>>>,
+        reader: Arc<Mutex<BoxAsyncReader>>,
     ) -> anyhow::Result<Option<Vec<u8>>>;
 
     async fn read_encrypted_chunk(
-        reader: Arc<Mutex<Box<dyn AsyncRead + Unpin + Send + Sync>>>,
+        reader: Arc<Mutex<BoxAsyncReader>>,
     ) -> anyhow::Result<Option<Vec<u8>>>;
 
     async fn read_encrypted_b64_chunk(
-        reader: Arc<Mutex<Box<dyn AsyncRead + Unpin + Send + Sync>>>,
+        reader: Arc<Mutex<BoxAsyncReader>>,
     ) -> anyhow::Result<Option<Vec<u8>>>;
 }
 
 #[async_trait]
 impl ChunkReading for ChunkReader {
     async fn read_plain_chunk(
-        reader: Arc<Mutex<Box<dyn AsyncRead + Unpin + Send + Sync>>>,
+        reader: Arc<Mutex<BoxAsyncReader>>,
     ) -> anyhow::Result<Option<Vec<u8>>> {
         let mut buf = vec![0u8; CHUNK_SIZE as usize];
         let bytes_read = reader
@@ -45,7 +46,7 @@ impl ChunkReading for ChunkReader {
     }
 
     async fn read_encrypted_chunk(
-        reader: Arc<Mutex<Box<dyn AsyncRead + Unpin + Send + Sync>>>,
+        reader: Arc<Mutex<BoxAsyncReader>>,
     ) -> anyhow::Result<Option<Vec<u8>>> {
         let chunk_size = match reader.lock().await.read_u32().await {
             Ok(n) => n,
@@ -67,7 +68,7 @@ impl ChunkReading for ChunkReader {
     }
 
     async fn read_encrypted_b64_chunk(
-        reader: Arc<Mutex<Box<dyn AsyncRead + Unpin + Send + Sync>>>,
+        reader: Arc<Mutex<BoxAsyncReader>>,
     ) -> anyhow::Result<Option<Vec<u8>>> {
         let mut buf_chunk_len = vec![0u8; 4];
         let bytes_read = reader.lock().await.read(&mut buf_chunk_len).await?;
@@ -75,7 +76,9 @@ impl ChunkReading for ChunkReader {
             return Ok(None);
         }
         let size_bytes = base64::decode(buf_chunk_len[..bytes_read].to_vec())?;
-        let chunk_size: u32 = String::from_utf8(size_bytes)?.parse()?;
+        let chunk_size: u32 = String::from_utf8(size_bytes)?
+            .parse()
+            .with_context(|| format!("failed to read chunk size"))?;
 
         let mut buf: Vec<u8> = vec![0u8; chunk_size as usize];
         // now reading the actual chunk
@@ -162,7 +165,7 @@ pub enum Action {
 // 3. write to a file or stdout
 // This function encapsulates this reoccurring procedure
 pub async fn read_process_write<F: Send + Sync + 'static, R: Send + Sync + 'static>(
-    reader: Box<dyn AsyncRead + Unpin + Send + Sync>,
+    reader: BoxAsyncReader,
     writer: &mut (dyn AsyncWrite + Unpin + Send + Sync),
     action: Action,
     mut fn_process: F,

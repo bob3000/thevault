@@ -148,13 +148,13 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use structopt::StructOpt;
 use tokio::fs as tokio_fs;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::process::Command;
 
 const BASE64_MARKER: &[u8] = b"THEVAULTB64";
 
 async fn fn_decrypt(
-    mut reader: Box<dyn AsyncRead + Unpin + Send + Sync>,
+    mut reader: io::BoxAsyncReader,
     mut writer: &mut (dyn AsyncWrite + Unpin + Send + Sync),
     pass: SecVec<u8>,
 ) -> anyhow::Result<io::Action> {
@@ -168,10 +168,10 @@ async fn fn_decrypt(
     let (action, header) = if marker == BASE64_MARKER {
         let mut buf_header_len = vec![0u8; 4];
         let bytes_read = reader.read(&mut buf_header_len).await?;
-        let header_len: u32 =
-            String::from_utf8(base64::decode(buf_header_len[..bytes_read].to_vec())?)?
-                .parse()
-                .with_context(|| format!("failed to read header size"))?;
+        let header_bytes = base64::decode(buf_header_len[..bytes_read].to_vec())?;
+        let header_len: u32 = String::from_utf8(header_bytes)?
+            .parse()
+            .with_context(|| format!("failed to read header size"))?;
         let mut buf_header = vec![0u8; header_len as usize];
         let bytes_read = reader.read(&mut buf_header).await?;
         let header = base64::decode(buf_header[..bytes_read].to_vec())?;
