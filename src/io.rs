@@ -9,6 +9,7 @@ use tokio::sync::Mutex;
 // Size of a chunks being read from the input source
 const CHUNK_SIZE: u64 = 1024;
 pub type BoxAsyncReader = Box<dyn AsyncRead + Unpin + Send + Sync>;
+pub type RefAsyncWriter<'a> = &'a mut (dyn AsyncWrite + Unpin + Send + Sync);
 
 struct ChunkReader;
 #[async_trait]
@@ -101,17 +102,17 @@ struct ChunkWriter;
 #[async_trait]
 trait ChunkWriting {
     async fn write_plain_chunk(
-        writer: Arc<Mutex<&mut (dyn AsyncWrite + Unpin + Send + Sync)>>,
+        writer: Arc<Mutex<RefAsyncWriter<'_>>>,
         chunk: Vec<u8>,
     ) -> anyhow::Result<()>;
 
     async fn write_encrypted_chunk(
-        writer: Arc<Mutex<&mut (dyn AsyncWrite + Unpin + Send + Sync)>>,
+        writer: Arc<Mutex<RefAsyncWriter<'_>>>,
         chunk: Vec<u8>,
     ) -> anyhow::Result<()>;
 
     async fn write_encrypted_b64_chunk(
-        writer: Arc<Mutex<&mut (dyn AsyncWrite + Unpin + Send + Sync)>>,
+        writer: Arc<Mutex<RefAsyncWriter<'_>>>,
         chunk: Vec<u8>,
     ) -> anyhow::Result<()>;
 }
@@ -119,7 +120,7 @@ trait ChunkWriting {
 #[async_trait]
 impl ChunkWriting for ChunkWriter {
     async fn write_plain_chunk(
-        writer: Arc<Mutex<&mut (dyn AsyncWrite + Unpin + Send + Sync)>>,
+        writer: Arc<Mutex<RefAsyncWriter<'_>>>,
         chunk: Vec<u8>,
     ) -> anyhow::Result<()> {
         writer.lock().await.write_all(&chunk).await?;
@@ -127,7 +128,7 @@ impl ChunkWriting for ChunkWriter {
     }
 
     async fn write_encrypted_chunk(
-        writer: Arc<Mutex<&mut (dyn AsyncWrite + Unpin + Send + Sync)>>,
+        writer: Arc<Mutex<RefAsyncWriter<'_>>>,
         chunk: Vec<u8>,
     ) -> anyhow::Result<()> {
         writer.lock().await.write_u32(chunk.len() as u32).await?;
@@ -136,7 +137,7 @@ impl ChunkWriting for ChunkWriter {
     }
 
     async fn write_encrypted_b64_chunk(
-        writer: Arc<Mutex<&mut (dyn AsyncWrite + Unpin + Send + Sync)>>,
+        writer: Arc<Mutex<RefAsyncWriter<'_>>>,
         chunk: Vec<u8>,
     ) -> anyhow::Result<()> {
         let b64_chunk = base64::encode(chunk).as_bytes().to_vec();
@@ -166,7 +167,7 @@ pub enum Action {
 // This function encapsulates this reoccurring procedure
 pub async fn read_process_write<F: Send + Sync + 'static, R: Send + Sync + 'static>(
     reader: BoxAsyncReader,
-    writer: &mut (dyn AsyncWrite + Unpin + Send + Sync),
+    writer: RefAsyncWriter<'_>,
     action: Action,
     mut fn_process: F,
 ) -> anyhow::Result<()>

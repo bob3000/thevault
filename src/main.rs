@@ -148,14 +148,14 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use structopt::StructOpt;
 use tokio::fs as tokio_fs;
-use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 
 const BASE64_MARKER: &[u8] = b"THEVAULTB64";
 
 async fn fn_decrypt(
     mut reader: io::BoxAsyncReader,
-    mut writer: &mut (dyn AsyncWrite + Unpin + Send + Sync),
+    mut writer: io::RefAsyncWriter<'_>,
     pass: SecVec<u8>,
 ) -> anyhow::Result<io::Action> {
     let mut marker = [0u8; BASE64_MARKER.len()];
