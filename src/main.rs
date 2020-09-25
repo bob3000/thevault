@@ -7,7 +7,7 @@ encryption using passwords. All cryptographic actions rely on libraries from the
 
 ## Features
 
-- encrypt / decrypt a files
+- encrypt / decrypt a file inplace or to a different destination
 - view encrypted file
 - edit encrypted file
 - read password from password file, environment variable, command line parameter
@@ -47,6 +47,7 @@ USAGE:
 FLAGS:
     -b, --base64     Write out the encrypted message as base64 encoded string
     -h, --help       Prints help information
+    -i, --inplace    Wether to write to encrypted message to the source file
     -V, --version    Prints version information
 
 OPTIONS:
@@ -85,7 +86,7 @@ the password without repeatedly typing it.
 ### A vault password file
 
 ```sh
-echo mysecretpassword > ~/.thevaultpass  # Caution: the password ends up in the shell history
+head -c 32 /dev/random | base64 > ~/.thevaultpass
 chmod 600 ~/.thevaultpass
 thevault encrypt -i -w ~/.thevaultpass myprivatefile.txt
 thevault decrypt -i -w ~/.thevaultpass myprivatefile.txt
@@ -94,7 +95,7 @@ thevault decrypt -i -w ~/.thevaultpass myprivatefile.txt
 ### An environment variable
 
 ```sh
-export THEVAULTPASS=mysecretpassword  # Caution: the password ends up in the shell history
+export THEVAULTPASS=$(head -c 32 /dev/random | base64)
 thevault encrypt -i myprivatefile.txt
 thevault decrypt -i myprivatefile.txt
 ```
@@ -118,14 +119,14 @@ Simple is better than complex.
 Complex is better than complicated.
 END
 Password:
-79QhinA1CXegm9pRPdlkIlVWrPcX4qYIkYlAsyl2Y6CVN2A21B726rhe8bVbBk+kcDyivl7DTnq+5oUaR3TkNM8N4j2+4OCKeuihnQ7Vtv4I3WJ4IQueUJvmsoBbxuCFHVoMqGkbIdehS3CVdvovACqCGlAvH39yxh61Ds1Dp1ND8Uzkhe9JlM5wicQyy2PgSRqSvie1W7Wq732oJ1Jp9Xo7wWOAMQInLGa8+9bzIADdzJWuyTynJYo4Jn38NhlflG7B2iZ/2d6Zz2SDwJkzIQ==%
+THEVAULTB64NDQ=e0uQ9vtxKucIiTMHqBaCi7tu3b26hEw4Xk4IvIQRadc=MjM2jVvSCWTJqCnlc3vetr5vYYo802VqEmmla40BJVlHeKjiA5wQFAYUB6LiWoej8Hh0RGnC/C6SyKfBpOTkx4VW6kY9uKwdipuTZkAUVaNB0NH2fcM0Ps5iXjQh+tcg18CDgLXLDnWH4DQm0rl10yGt3W9DLWUcpAgyW6aQPqnuWeKDbZo9zdr7zXD5AomFv2zPZcMDEN8vhU1AWqzHJXnEjudZOq+nCn5735Jn4ZC+hMY=
 ```
 
-### Decrypt a file
+### Decrypt a file to a different destination
 
 ```sh
 ❯ cat zen.aes
-XHapWrX3GY0w7armyeN6deuASMvuAoUo+3D3njamKNq73s5kptnrwKvEfmVkvG4NDay+FTSAwDmYDFMKHpQBmnq0DPK84/pplnADK2Untfzizh9ykZxd/ZLk/yLve6x2zuExSR04Ww+itbYuk1kPGgyrCpsBFkxtI8TnRZxSzmzDzjHGus/H2Qa36F/gBRZS5inxqReCYkgLRKjree9+rP+Ms8XyLc0aJWI/FmD8cKQ71k+QeJ/4ch7pIFbQ4A+fCHqSJZju45IoJIoMHm6TEQ==%
+THEVAULTB64NDQ=e0uQ9vtxKucIiTMHqBaCi7tu3b26hEw4Xk4IvIQRadc=MjM2jVvSCWTJqCnlc3vetr5vYYo802VqEmmla40BJVlHeKjiA5wQFAYUB6LiWoej8Hh0RGnC/C6SyKfBpOTkx4VW6kY9uKwdipuTZkAUVaNB0NH2fcM0Ps5iXjQh+tcg18CDgLXLDnWH4DQm0rl10yGt3W9DLWUcpAgyW6aQPqnuWeKDbZo9zdr7zXD5AomFv2zPZcMDEN8vhU1AWqzHJXnEjudZOq+nCn5735Jn4ZC+hMY=
 
 ❯ thevault decrypt -f zen.aes -o zen
 Password:
