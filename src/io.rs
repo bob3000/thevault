@@ -7,7 +7,7 @@ use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 
 // Size of a chunks being read from the input source
-const CHUNK_SIZE: u64 = 4096;
+const CHUNK_SIZE: u64 = 1024;
 
 struct ChunkReader;
 #[async_trait]
@@ -34,14 +34,14 @@ impl ChunkReading for ChunkReader {
         let bytes_read = reader
             .lock()
             .await
-            .read_buf(&mut buf)
+            .read(&mut buf)
             .await
             .with_context(|| format!("Error reading encrypted file"))?;
-        if bytes_read > 0 {
-            Ok(Some(buf[bytes_read..].to_vec()))
-        } else {
-            Ok(None)
+
+        if bytes_read == 0 {
+            return Ok(None);
         }
+        Ok(Some(buf[..bytes_read].to_vec()))
     }
 
     async fn read_encrypted_chunk(
@@ -56,27 +56,41 @@ impl ChunkReading for ChunkReader {
         let bytes_read = reader
             .lock()
             .await
-            .read_buf(&mut buf)
+            .read(&mut buf)
             .await
             .with_context(|| format!("Error reading encrypted file"))?;
 
-        if bytes_read > 0 {
-            Ok(Some(buf[bytes_read..].to_vec()))
-        } else {
-            Ok(None)
+        if bytes_read == 0 {
+            return Ok(None);
         }
+        Ok(Some(buf[..bytes_read].to_vec()))
     }
 
     async fn read_encrypted_b64_chunk(
         reader: Arc<Mutex<Box<dyn AsyncRead + Unpin + Send + Sync>>>,
     ) -> anyhow::Result<Option<Vec<u8>>> {
-        match Self::read_encrypted_chunk(reader).await? {
-            Some(chunk) => {
-                let plain = base64::decode(chunk)?;
-                Ok::<Option<Vec<u8>>, anyhow::Error>(Some(plain))
-            }
-            None => Ok::<Option<Vec<u8>>, anyhow::Error>(None),
+        let mut buf_chunk_len = vec![0u8; 4];
+        let bytes_read = reader.lock().await.read(&mut buf_chunk_len).await?;
+        if bytes_read == 0 {
+            return Ok(None);
         }
+        let size_bytes = base64::decode(buf_chunk_len[..bytes_read].to_vec())?;
+        let chunk_size: u32 = String::from_utf8(size_bytes)?.parse()?;
+
+        let mut buf: Vec<u8> = vec![0u8; chunk_size as usize];
+        // now reading the actual chunk
+        let bytes_read = reader
+            .lock()
+            .await
+            .read(&mut buf)
+            .await
+            .with_context(|| format!("Error reading encrypted file"))?;
+
+        if bytes_read == 0 {
+            return Ok(None);
+        }
+        let plain_chunk = base64::decode(buf[..bytes_read].to_vec())?;
+        Ok(Some(plain_chunk))
     }
 }
 
@@ -122,8 +136,15 @@ impl ChunkWriting for ChunkWriter {
         writer: Arc<Mutex<&mut (dyn AsyncWrite + Unpin + Send + Sync)>>,
         chunk: Vec<u8>,
     ) -> anyhow::Result<()> {
-        let chunk = base64::encode(chunk).as_bytes().to_vec();
-        ChunkWriter::write_encrypted_chunk(writer, chunk).await
+        let b64_chunk = base64::encode(chunk).as_bytes().to_vec();
+        let b64_chunk_len = base64::encode(format!("{:02}", b64_chunk.len()));
+        writer
+            .lock()
+            .await
+            .write_all(&b64_chunk_len.as_bytes())
+            .await?;
+        writer.lock().await.write_all(&b64_chunk).await?;
+        Ok(())
     }
 }
 

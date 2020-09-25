@@ -158,15 +158,30 @@ async fn fn_decrypt(
     mut writer: &mut (dyn AsyncWrite + Unpin + Send + Sync),
     pass: SecVec<u8>,
 ) -> anyhow::Result<io::Action> {
-    let mut marker = Vec::with_capacity(BASE64_MARKER.len());
-    reader.read_buf(&mut marker).await?;
-    let action = if marker == BASE64_MARKER {
-        io::Action::DecryptB64
+    let mut marker = [0u8; BASE64_MARKER.len()];
+    let bytes_read = reader.read(&mut marker).await?;
+    if bytes_read == 0 {
+        return Err(anyhow::anyhow!(
+            "input source seems to be empty, aborting ..."
+        ));
+    }
+    let (action, header) = if marker == BASE64_MARKER {
+        let mut buf_header_len = vec![0u8; 4];
+        let bytes_read = reader.read(&mut buf_header_len).await?;
+        let header_len: u32 =
+            String::from_utf8(base64::decode(buf_header_len[..bytes_read].to_vec())?)?
+                .parse()
+                .with_context(|| format!("failed to read header size"))?;
+        let mut buf_header = vec![0u8; header_len as usize];
+        let bytes_read = reader.read(&mut buf_header).await?;
+        let header = base64::decode(buf_header[..bytes_read].to_vec())?;
+        (io::Action::DecryptB64, header)
     } else {
-        io::Action::Decrypt
+        let header_len = reader.read_u32().await?;
+        let mut buf_header = vec![0u8; header_len as usize];
+        let bytes_read = reader.read(&mut buf_header).await?;
+        (io::Action::Decrypt, buf_header[..bytes_read].to_vec())
     };
-    let mut header = [0u8; crypto::HEADER_LEN];
-    reader.read(&mut header).await?;
     let (salt, init_vec) = crypto::split_header(&header)?;
     let decrypter = crypto::Crypto::new_decrypter(&pass, salt.to_vec(), init_vec.to_vec()).await?;
     io::read_process_write(reader, &mut writer, action, move |cipher_package| {
@@ -252,15 +267,17 @@ async fn vault_encrypt<'a>(
             .write_all(BASE64_MARKER)
             .await
             .with_context(|| format!("could not write to output, aborting ..."))?;
-        writer
-            .write(base64::encode(encrypter.header()).as_bytes())
-            .await?;
+        let header = base64::encode(encrypter.header());
+        let header_len = base64::encode(format!("{:02}", header.len()));
+        writer.write_all(header_len.as_bytes()).await?;
+        writer.write_all(header.as_bytes()).await?;
         io::Action::EncryptB64
     } else {
         writer
             .write_all(&vec![0u8; BASE64_MARKER.len()])
             .await
             .with_context(|| format!("could not write to output, aborting ..."))?;
+        writer.write_u32(encrypter.header().len() as u32).await?;
         writer.write_all(&encrypter.header()).await?;
         io::Action::Encrypt
     };
