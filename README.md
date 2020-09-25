@@ -2,7 +2,7 @@
 
 The Vault is a command line file encryption tool. It performs symmetric AES
 encryption using passwords. All cryptographic actions rely on libraries from the
-[rust crypto](https://docs.rs/rust-crypto/0.2.36/crypto/) project.
+[rust crypto](https://github.com/RustCrypto/block-ciphers) project.
 
 ## Features
 
