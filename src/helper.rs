@@ -19,7 +19,7 @@ pub fn get_password(
 ) -> anyhow::Result<SecVec<u8>> {
     // First option - user entered a password as a command line option
     if password.is_some() {
-        return Ok(SecVec::from(password.take().unwrap().to_string()));
+        return Ok(SecVec::from(password.take().unwrap()));
     };
 
     // Second option - user provided a password file
@@ -41,7 +41,7 @@ pub async fn get_reader(
 ) -> anyhow::Result<Box<dyn AsyncRead + Unpin + Send + Sync>> {
     match file {
         Some(path) => {
-            let f = tokio_fs::File::open(path.clone())
+            let f = tokio_fs::File::open(path)
                 .await
                 .with_context(|| format!("failed to open input file {}", path.to_str().unwrap()))?;
             Ok(Box::new(f))
@@ -55,11 +55,9 @@ pub async fn get_writer(
 ) -> anyhow::Result<Box<dyn AsyncWrite + Unpin + Send + Sync>> {
     match output {
         Some(path) => {
-            let f = tokio_fs::File::create(path.clone())
-                .await
-                .with_context(|| {
-                    format!("failed to create output file {}", path.to_str().unwrap())
-                })?;
+            let f = tokio_fs::File::create(path).await.with_context(|| {
+                format!("failed to create output file {}", path.to_str().unwrap())
+            })?;
             Ok(Box::new(f))
         }
         None => Ok(Box::new(tokio_io::stdout())),
@@ -99,7 +97,9 @@ mod tests {
 
     #[test]
     fn which_less() {
-        assert!(which("less").unwrap_or("nope".into()).ends_with("/less"));
+        assert!(which("less")
+            .unwrap_or_else(|_| "nope".into())
+            .ends_with("/less"));
         assert!(which("lesssss")
             .unwrap_err()
             .to_string()

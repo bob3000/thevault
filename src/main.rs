@@ -172,7 +172,7 @@ async fn fn_decrypt(
         let header_bytes = base64::decode(buf_header_len[..bytes_read].to_vec())?;
         let header_len: u32 = String::from_utf8(header_bytes)?
             .parse()
-            .with_context(|| format!("failed to read header size"))?;
+            .with_context(|| "failed to read header size")?;
         let mut buf_header = vec![0u8; header_len as usize];
         let bytes_read = reader.read(&mut buf_header).await?;
         let header = base64::decode(buf_header[..bytes_read].to_vec())?;
@@ -211,13 +211,13 @@ async fn vault_decrypt<'a>(
     Ok(action_performed)
 }
 
-async fn vault_edit<'a>(
-    file_input: &'a Path,
+async fn vault_edit(
+    file_input: &'_ Path,
     password: Option<String>,
     password_file: Option<PathBuf>,
 ) -> anyhow::Result<io::Action> {
-    let editor_cmd = env::var("EDITOR").unwrap_or("vim".to_string());
-    let editor = helper::which(&editor_cmd).with_context(|| format!("no pager was found"))?;
+    let editor_cmd = env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
+    let editor = helper::which(&editor_cmd).with_context(|| "no pager was found")?;
     let tmp_file = tempfile::NamedTempFile::new()?;
 
     let action_performed = vault_decrypt(
@@ -234,11 +234,7 @@ async fn vault_edit<'a>(
         .with_context(|| format!("error while spawning pager {}", editor_cmd))?;
     editor_process.wait_with_output().await?;
 
-    let b64 = if action_performed == io::Action::DecryptB64 {
-        true
-    } else {
-        false
-    };
+    let b64 = action_performed == io::Action::DecryptB64;
     let action_performed = vault_encrypt(
         Some(tmp_file.path()),
         Some(file_input),
@@ -267,7 +263,7 @@ async fn vault_encrypt<'a>(
         writer
             .write_all(BASE64_MARKER)
             .await
-            .with_context(|| format!("could not write to output, aborting ..."))?;
+            .with_context(|| "could not write to output, aborting ...")?;
         let header = base64::encode(encrypter.header());
         let header_len = base64::encode(format!("{:02}", header.len()));
         writer.write_all(header_len.as_bytes()).await?;
@@ -277,7 +273,7 @@ async fn vault_encrypt<'a>(
         writer
             .write_all(&vec![0u8; BASE64_MARKER.len()])
             .await
-            .with_context(|| format!("could not write to output, aborting ..."))?;
+            .with_context(|| "could not write to output, aborting ...")?;
         writer.write_u32(encrypter.header().len() as u32).await?;
         writer.write_all(&encrypter.header()).await?;
         io::Action::Encrypt
@@ -295,14 +291,14 @@ async fn vault_encrypt<'a>(
     Ok(encoding)
 }
 
-async fn vault_view<'a>(
-    file_input: &'a Path,
+async fn vault_view(
+    file_input: &'_ Path,
     mut password: Option<String>,
     password_file: Option<PathBuf>,
 ) -> anyhow::Result<io::Action> {
     let pass = helper::get_password(&mut password, &password_file).unwrap();
-    let pager_cmd = env::var("PAGER").unwrap_or("less".to_string());
-    let pager = helper::which(&pager_cmd).with_context(|| format!("no pager was found"))?;
+    let pager_cmd = env::var("PAGER").unwrap_or_else(|_| "less".to_string());
+    let pager = helper::which(&pager_cmd).with_context(|| "no pager was found")?;
     let mut pager_process = Command::new(pager)
         .stdin(Stdio::piped())
         .spawn()
@@ -494,7 +490,7 @@ mod tests {
             .stdout(Stdio::piped())
             .spawn()
             .expect("failed to spawn child process, try to run: cargo build --release");
-        let plaintext = r#"Encrypt this text!"#.as_bytes();
+        let plaintext = b"Encrypt this text!";
         {
             let stdin = encrypt_cmd.stdin.as_mut().expect("failed to open stdin");
             stdin

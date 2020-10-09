@@ -38,7 +38,7 @@ impl ChunkReading for ChunkReader {
             .await
             .read(&mut buf)
             .await
-            .with_context(|| format!("Error reading encrypted file"))?;
+            .with_context(|| "Error reading encrypted file")?;
 
         if bytes_read == 0 {
             return Ok(None);
@@ -60,7 +60,7 @@ impl ChunkReading for ChunkReader {
             .await
             .read(&mut buf)
             .await
-            .with_context(|| format!("Error reading encrypted file"))?;
+            .with_context(|| "Error reading encrypted file")?;
 
         if bytes_read == 0 {
             return Ok(None);
@@ -79,7 +79,7 @@ impl ChunkReading for ChunkReader {
         let size_bytes = base64::decode(buf_chunk_len[..bytes_read].to_vec())?;
         let chunk_size: u32 = String::from_utf8(size_bytes)?
             .parse()
-            .with_context(|| format!("failed to read chunk size"))?;
+            .with_context(|| "failed to read chunk size")?;
 
         let mut buf: Vec<u8> = vec![0u8; chunk_size as usize];
         // now reading the actual chunk
@@ -88,7 +88,7 @@ impl ChunkReading for ChunkReader {
             .await
             .read(&mut buf)
             .await
-            .with_context(|| format!("Error reading encrypted file"))?;
+            .with_context(|| "Error reading encrypted file")?;
 
         if bytes_read == 0 {
             return Ok(None);
@@ -196,7 +196,7 @@ where
     // start processing the file
     tokio::spawn(async move {
         while let Some(chunk) = fn_read(Arc::clone(&reader)).await? {
-            if let Err(_) = tx.send(fn_process(chunk)).await {
+            if tx.send(fn_process(chunk)).await.is_ok() {
                 return Err(anyhow::anyhow!("could not write to disk"));
             }
         }
