@@ -196,7 +196,7 @@ where
     // start processing the file
     tokio::spawn(async move {
         while let Some(chunk) = fn_read(Arc::clone(&reader)).await? {
-            if tx.send(fn_process(chunk)).await.is_ok() {
+            if tx.send(fn_process(chunk)).await.is_err() {
                 return Err(anyhow::anyhow!("could not write to disk"));
             }
         }
