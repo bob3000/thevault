@@ -147,6 +147,7 @@ use secstr::SecVec;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::Arc;
 use structopt::StructOpt;
 use tokio::fs as tokio_fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -184,9 +185,11 @@ async fn fn_decrypt(
         (io::Action::Decrypt, buf_header[..bytes_read].to_vec())
     };
     let (salt, init_vec) = crypto::split_header(&header)?;
-    let decrypter = crypto::Crypto::new_decrypter(&pass, salt.to_vec(), init_vec.to_vec()).await?;
+    let decrypter =
+        Arc::new(crypto::Crypto::new_decrypter(&pass, salt.to_vec(), init_vec.to_vec()).await?);
+
     io::read_process_write(reader, &mut writer, action, move |cipher_package| {
-        let cpt = decrypter.clone();
+        let cpt = Arc::clone(&decrypter);
         async move {
             let plaintext = cpt.decrypt(&cipher_package).await?.unsecure().to_vec();
             Ok::<Vec<u8>, anyhow::Error>(plaintext)
@@ -256,7 +259,7 @@ async fn vault_encrypt<'a>(
     let pass = helper::get_password(&mut password, &password_file).unwrap();
     let reader = helper::get_reader(file_input).await?;
     let mut writer = helper::get_writer(file_output).await?;
-    let encrypter = crypto::Crypto::new_encrypter(&pass).await?;
+    let encrypter = Arc::new(crypto::Crypto::new_encrypter(&pass).await?);
 
     // write header
     let encoding = if base64 {
@@ -281,7 +284,7 @@ async fn vault_encrypt<'a>(
 
     // start data processing
     io::read_process_write(reader, &mut writer, encoding, move |plaintext| {
-        let cpt = encrypter.clone();
+        let cpt = Arc::clone(&encrypter);
         async move {
             let ciphertext = cpt.encrypt(SecVec::new(plaintext.to_vec())).await;
             Ok::<Vec<u8>, anyhow::Error>(ciphertext)
