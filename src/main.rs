@@ -142,6 +142,7 @@ Complex is better than complicated.
 mod crypto;
 mod helper;
 mod io;
+mod sodium;
 use anyhow::Context;
 use secstr::SecVec;
 use std::env;

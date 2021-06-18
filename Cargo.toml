@@ -31,3 +31,4 @@ tempfile = "3.1.0"
 thiserror = "1.0.20"
 tokio = {version = "0.2.*", features = ["full"]}
 async-trait = "0.1.40"
+sodiumoxide = "0.2.6"
