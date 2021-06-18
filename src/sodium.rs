@@ -1,6 +1,7 @@
-use crate::crypto::DecryptionError;
 use secstr::SecVec;
 use sodiumoxide::crypto::{pwhash, secretbox};
+use std::io;
+use thiserror::Error;
 
 pub const HEADER_LEN: usize = 56;
 
@@ -70,6 +71,14 @@ pub fn split_header(header: &[u8]) -> Result<(&[u8], &[u8]), DecryptionError> {
         return Err(DecryptionError::InvalidCipherLength);
     }
     Ok((&header[..32], &header[32..]))
+}
+
+#[derive(Error, Debug)]
+pub enum DecryptionError {
+    #[error("cipher text does not contain all necessary elements")]
+    InvalidCipherLength,
+    #[error("Improper header length")]
+    HeaderError(#[from] io::Error),
 }
 
 #[cfg(test)]
