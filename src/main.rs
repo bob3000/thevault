@@ -139,9 +139,9 @@ Complex is better than complicated.
 ```
 */
 
-mod crypto;
 mod helper;
 mod io;
+mod sodium;
 use anyhow::Context;
 use secstr::SecVec;
 use std::env;
@@ -184,9 +184,9 @@ async fn fn_decrypt(
         let bytes_read = reader.read(&mut buf_header).await?;
         (io::Action::Decrypt, buf_header[..bytes_read].to_vec())
     };
-    let (salt, init_vec) = crypto::split_header(&header)?;
+    let (salt, init_vec) = sodium::split_header(&header)?;
     let decrypter =
-        Arc::new(crypto::Crypto::new_decrypter(&pass, salt.to_vec(), init_vec.to_vec()).await?);
+        Arc::new(sodium::Crypto::new_decrypter(&pass, salt.to_vec(), init_vec.to_vec()).await?);
 
     io::read_process_write(reader, &mut writer, action, move |cipher_package| {
         let cpt = Arc::clone(&decrypter);
@@ -259,7 +259,7 @@ async fn vault_encrypt<'a>(
     let pass = helper::get_password(&mut password, &password_file).unwrap();
     let reader = helper::get_reader(file_input).await?;
     let mut writer = helper::get_writer(file_output).await?;
-    let encrypter = Arc::new(crypto::Crypto::new_encrypter(&pass).await?);
+    let encrypter = Arc::new(sodium::Crypto::new_encrypter(&pass).await?);
 
     // write header
     let encoding = if base64 {
