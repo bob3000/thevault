@@ -7,7 +7,7 @@ use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 
 // Size of a chunks being read from the input source
-const CHUNK_SIZE: u64 = 1024;
+pub const CHUNK_SIZE: u64 = 1024;
 pub type BoxAsyncReader = Box<dyn AsyncRead + Unpin + Send + Sync>;
 pub type RefAsyncWriter<'a> = &'a mut (dyn AsyncWrite + Unpin + Send + Sync);
 

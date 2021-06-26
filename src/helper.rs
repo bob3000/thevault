@@ -36,6 +36,14 @@ pub fn get_password(
     Ok(SecVec::from(pass.trim().to_owned()))
 }
 
+pub fn filesize(file: Option<&Path>) -> u64 {
+    match file {
+        Some(path) if path.metadata().is_ok() => path.metadata().unwrap().len(),
+        Some(_) => 0,
+        None => 0,
+    }
+}
+
 pub async fn get_reader(
     file: Option<&Path>,
 ) -> anyhow::Result<Box<dyn AsyncRead + Unpin + Send + Sync>> {
