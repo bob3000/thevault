@@ -191,8 +191,7 @@ async fn fn_decrypt(
     io::read_process_write(reader, &mut writer, action, move |cipher_package| {
         let cpt = Arc::clone(&decrypter);
         async move {
-            let plaintext = cpt.decrypt(&cipher_package).await?.unsecure().to_vec();
-            Ok::<Vec<u8>, anyhow::Error>(plaintext)
+            Ok::<Vec<u8>, anyhow::Error>(cpt.decrypt(&cipher_package).await?.unsecure().to_vec())
         }
     })
     .await?;

@@ -36,8 +36,10 @@ impl Crypto {
     }
 
     pub async fn decrypt(&self, cipher_package: &[u8]) -> Result<SecVec<u8>, DecryptionError> {
-        let plaintext = secretbox::open(&cipher_package, &self.nonce, &self.key).unwrap();
-        Ok(SecVec::new(plaintext))
+        match secretbox::open(&cipher_package, &self.nonce, &self.key) {
+            Ok(t) => Ok(SecVec::new(t)),
+            Err(_) => Err(DecryptionError::InvalidCipherLength),
+        }
     }
 
     pub fn header(&self) -> Vec<u8> {
