@@ -25,3 +25,4 @@ thiserror = "1.0.20"
 tokio = {version = "0.2.*", features = ["full"]}
 async-trait = "0.1.40"
 sodiumoxide = "0.2.6"
+indicatif = {version = "0.16.2", features = ['improved_unicode']}

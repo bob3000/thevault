@@ -142,7 +142,7 @@ mod helper;
 mod io;
 mod sodium;
 use anyhow::Context;
-use indicatif::ProgressBar;
+use indicatif::{ProgressBar, ProgressStyle};
 use secstr::SecVec;
 use std::env;
 use std::path::{Path, PathBuf};
@@ -155,12 +155,41 @@ use tokio::process::Command;
 
 const BASE64_MARKER: &[u8] = b"THEVAULTB64";
 
-fn make_progressbar(verbose: bool, file_input: Option<&Path>) -> Arc<ProgressBar> {
+fn make_progressbar(
+    verbose: bool,
+    file_input: Option<&Path>,
+    message: Option<&'static str>,
+) -> Arc<ProgressBar> {
     let num_blocks = helper::filesize(file_input) / io::CHUNK_SIZE;
     if verbose && num_blocks > 0 {
-        return Arc::new(ProgressBar::new(num_blocks));
+        let bar = Arc::new(ProgressBar::new(num_blocks));
+        bar.set_style(
+            ProgressStyle::default_bar()
+                .template("[{elapsed_precise}] [{bar:40.cyan/blue}] {pos:>7}/{len:7} {msg}")
+                .progress_chars("=>-"),
+        );
+        return bar;
     } else if verbose && num_blocks == 0 {
-        return Arc::new(ProgressBar::new_spinner());
+        let bar = Arc::new(ProgressBar::new_spinner());
+        bar.set_style(
+            ProgressStyle::default_spinner()
+                // For more spinners check out the cli-spinners project:
+                // https://github.com/sindresorhus/cli-spinners/blob/master/spinners.json
+                .tick_strings(&[
+                    "▹▹▹▹▹",
+                    "▸▹▹▹▹",
+                    "▹▸▹▹▹",
+                    "▹▹▸▹▹",
+                    "▹▹▹▸▹",
+                    "▹▹▹▹▸",
+                    "▪▪▪▪▪",
+                ])
+                .template("{spinner:.blue} {msg}"),
+        );
+        if let Some(msg) = message {
+            bar.set_message(msg);
+        }
+        return bar;
     } else {
         return Arc::new(ProgressBar::hidden());
     }
@@ -206,7 +235,14 @@ async fn fn_decrypt(
         let bar = Arc::clone(&progress_bar);
         bar.inc(1);
         async move {
-            Ok::<Vec<u8>, anyhow::Error>(cpt.decrypt(&cipher_package).await?.unsecure().to_vec())
+            match cpt.decrypt(&cipher_package).await {
+                Ok(s) => Ok::<Vec<u8>, anyhow::Error>(s.unsecure().to_vec()),
+                Err(_) => {
+                    eprintln!("bad block no {}", bar.position(),);
+                    eprintln!("block size {}", io::CHUNK_SIZE);
+                    Ok::<Vec<u8>, anyhow::Error>(vec![0])
+                }
+            }
         }
     })
     .await?;
@@ -225,9 +261,13 @@ async fn vault_decrypt<'a>(
     let pass = helper::get_password(&mut password, &password_file).unwrap();
     let reader = helper::get_reader(file_input).await?;
     let mut writer = helper::get_writer(file_output).await?;
-    let progress_bar = make_progressbar(verbose, file_input);
-    let action_performed = fn_decrypt(progress_bar, reader, &mut writer, pass).await?;
-    Ok(action_performed)
+    let progress_bar = make_progressbar(verbose, file_input, Some("decrypting"));
+    match fn_decrypt(Arc::clone(&progress_bar), reader, &mut writer, pass).await {
+        Ok(action_performed) => Ok(action_performed),
+        Err(_) => {
+            std::process::exit(1);
+        }
+    }
 }
 
 async fn vault_edit(
@@ -302,7 +342,7 @@ async fn vault_encrypt<'a>(
         io::Action::Encrypt
     };
 
-    let progress_bar = make_progressbar(verbose, file_input);
+    let progress_bar = make_progressbar(verbose, file_input, Some("encrypting"));
     let finish_bar = Arc::clone(&progress_bar);
     // start data processing
     io::read_process_write(reader, &mut writer, encoding, move |plaintext| {
@@ -338,7 +378,7 @@ async fn vault_view(
         .with_context(|| format!("failed to open input file {}", file_input.to_str().unwrap()))?;
     let mut writer = &mut pager_process.stdin.as_mut().unwrap();
 
-    let progress_bar = make_progressbar(verbose, Some(file_input));
+    let progress_bar = make_progressbar(verbose, Some(file_input), Some("decrypting"));
     let action_performed = fn_decrypt(progress_bar, Box::new(reader), &mut writer, pass).await?;
     pager_process.wait_with_output().await?;
     Ok(action_performed)
