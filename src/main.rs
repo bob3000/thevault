@@ -200,6 +200,7 @@ async fn fn_decrypt(
     mut reader: io::BoxAsyncReader,
     mut writer: io::RefAsyncWriter<'_>,
     pass: SecVec<u8>,
+    ignore_errors: bool,
 ) -> anyhow::Result<io::Action> {
     let mut marker = [0u8; BASE64_MARKER.len()];
     let bytes_read = reader.read(&mut marker).await?;
@@ -237,10 +238,15 @@ async fn fn_decrypt(
         async move {
             match cpt.decrypt(&cipher_package).await {
                 Ok(s) => Ok::<Vec<u8>, anyhow::Error>(s.unsecure().to_vec()),
-                Err(_) => {
+                Err(e) => {
                     eprintln!("bad block no {}", bar.position(),);
                     eprintln!("block size {}", io::CHUNK_SIZE);
-                    Ok::<Vec<u8>, anyhow::Error>(vec![0])
+                    if ignore_errors {
+                        Ok::<Vec<u8>, anyhow::Error>(vec![0])
+                    } else {
+                        eprintln!("aborting");
+                        Err(anyhow::anyhow!(e))
+                    }
                 }
             }
         }
@@ -257,12 +263,21 @@ async fn vault_decrypt<'a>(
     mut password: Option<String>,
     password_file: Option<PathBuf>,
     verbose: bool,
+    ignore_errors: bool,
 ) -> anyhow::Result<io::Action> {
     let pass = helper::get_password(&mut password, &password_file).unwrap();
     let reader = helper::get_reader(file_input).await?;
     let mut writer = helper::get_writer(file_output).await?;
     let progress_bar = make_progressbar(verbose, file_input, Some("decrypting"));
-    match fn_decrypt(Arc::clone(&progress_bar), reader, &mut writer, pass).await {
+    match fn_decrypt(
+        Arc::clone(&progress_bar),
+        reader,
+        &mut writer,
+        pass,
+        ignore_errors,
+    )
+    .await
+    {
         Ok(action_performed) => Ok(action_performed),
         Err(_) => {
             std::process::exit(1);
@@ -286,6 +301,7 @@ async fn vault_edit(
         password.clone(),
         password_file.clone(),
         verbose,
+        false,
     )
     .await?;
 
@@ -379,7 +395,8 @@ async fn vault_view(
     let mut writer = &mut pager_process.stdin.as_mut().unwrap();
 
     let progress_bar = make_progressbar(verbose, Some(file_input), Some("decrypting"));
-    let action_performed = fn_decrypt(progress_bar, Box::new(reader), &mut writer, pass).await?;
+    let action_performed =
+        fn_decrypt(progress_bar, Box::new(reader), &mut writer, pass, false).await?;
     pager_process.wait_with_output().await?;
     Ok(action_performed)
 }
@@ -422,6 +439,8 @@ enum Opt {
         password_file: Option<PathBuf>,
         #[structopt(long, short("v"), help = "Verbose output")]
         verbose: bool,
+        #[structopt(long, short("i"), help = "Verbose output")]
+        ignore_errors: bool,
     },
     /// Opens an encrypted file in the default editor
     Edit {
@@ -522,6 +541,7 @@ async fn main() -> anyhow::Result<()> {
             password,
             password_file,
             verbose,
+            ignore_errors,
         } => {
             vault_decrypt(
                 file.as_deref(),
@@ -529,6 +549,7 @@ async fn main() -> anyhow::Result<()> {
                 password,
                 password_file,
                 verbose,
+                ignore_errors,
             )
             .await?
         }
@@ -649,6 +670,7 @@ mod tests {
             Some(file_decrypted.path()),
             Some(password),
             None,
+            false,
             false,
         )
         .await
