@@ -157,10 +157,15 @@ const BASE64_MARKER: &[u8] = b"THEVAULTB64";
 
 fn make_progressbar(
     verbose: bool,
-    file_input: Option<&Path>,
+    file_input: Option<io::IOType>,
     message: Option<&'static str>,
 ) -> Arc<ProgressBar> {
-    let num_blocks = helper::filesize(file_input) / io::CHUNK_SIZE;
+    let num_blocks = match file_input {
+        Some(io::IOType::FileIO(f)) => helper::filesize(f) / io::CHUNK_SIZE,
+        Some(io::IOType::NetworkIO(_)) => 0,
+        None => 0,
+    };
+
     if verbose && num_blocks > 0 {
         let bar = Arc::new(ProgressBar::new(num_blocks));
         bar.set_style(
@@ -258,15 +263,15 @@ async fn fn_decrypt(
 
 // sub commands
 async fn vault_decrypt<'a>(
-    file_input: Option<&'a Path>,
-    file_output: Option<&'a Path>,
+    file_input: Option<io::IOType>,
+    file_output: Option<io::IOType>,
     mut password: Option<String>,
     password_file: Option<PathBuf>,
     verbose: bool,
     ignore_errors: bool,
 ) -> anyhow::Result<io::Action> {
     let pass = helper::get_password(&mut password, &password_file).unwrap();
-    let reader = helper::get_reader(file_input).await?;
+    let reader = helper::get_reader(file_input.clone()).await?;
     let mut writer = helper::get_writer(file_output).await?;
     let progress_bar = make_progressbar(verbose, file_input, Some("decrypting"));
     match fn_decrypt(
@@ -296,8 +301,8 @@ async fn vault_edit(
     let tmp_file = tempfile::NamedTempFile::new()?;
 
     let action_performed = vault_decrypt(
-        Some(file_input),
-        Some(tmp_file.path()),
+        Some(io::IOType::FileIO(file_input.to_owned())),
+        Some(io::IOType::FileIO(tmp_file.path().to_owned())),
         password.clone(),
         password_file.clone(),
         verbose,
@@ -313,8 +318,8 @@ async fn vault_edit(
 
     let b64 = action_performed == io::Action::DecryptB64;
     let action_performed = vault_encrypt(
-        Some(tmp_file.path()),
-        Some(file_input),
+        Some(io::IOType::FileIO(tmp_file.path().to_owned())),
+        Some(io::IOType::FileIO(file_input.to_owned())),
         password,
         password_file,
         b64,
@@ -325,15 +330,15 @@ async fn vault_edit(
 }
 
 async fn vault_encrypt<'a>(
-    file_input: Option<&'a Path>,
-    file_output: Option<&'a Path>,
+    file_input: Option<io::IOType>,
+    file_output: Option<io::IOType>,
     mut password: Option<String>,
     password_file: Option<PathBuf>,
     base64: bool,
     verbose: bool,
 ) -> anyhow::Result<io::Action> {
     let pass = helper::get_password(&mut password, &password_file).unwrap();
-    let reader = helper::get_reader(file_input).await?;
+    let reader = helper::get_reader(file_input.clone()).await?;
     let mut writer = helper::get_writer(file_output).await?;
     let encrypter = Arc::new(sodium::Crypto::new_encrypter(&pass).await?);
 
@@ -394,7 +399,11 @@ async fn vault_view(
         .with_context(|| format!("failed to open input file {}", file_input.to_str().unwrap()))?;
     let mut writer = &mut pager_process.stdin.as_mut().unwrap();
 
-    let progress_bar = make_progressbar(verbose, Some(file_input), Some("decrypting"));
+    let progress_bar = make_progressbar(
+        verbose,
+        Some(io::IOType::FileIO(file_input.to_owned())),
+        Some("decrypting"),
+    );
     let action_performed =
         fn_decrypt(progress_bar, Box::new(reader), &mut writer, pass, false).await?;
     pager_process.wait_with_output().await?;
@@ -413,14 +422,14 @@ enum Opt {
             parse(from_os_str),
             help = "File to decrypt [default: stdin]"
         )]
-        file: Option<PathBuf>,
+        file: Option<io::IOType>,
         #[structopt(
             long,
             short,
             parse(from_os_str),
             help = "Destination file [default: stdout]"
         )]
-        outfile: Option<PathBuf>,
+        outfile: Option<io::IOType>,
         #[structopt(
             long,
             short,
@@ -473,14 +482,14 @@ enum Opt {
             parse(from_os_str),
             help = "File to encrypt [default: stdin]"
         )]
-        file: Option<PathBuf>,
+        file: Option<io::IOType>,
         #[structopt(
             long,
             short,
             parse(from_os_str),
             help = "Destination file [default: stdout]"
         )]
-        outfile: Option<PathBuf>,
+        outfile: Option<io::IOType>,
         #[structopt(
             long,
             short,
@@ -544,8 +553,8 @@ async fn main() -> anyhow::Result<()> {
             ignore_errors,
         } => {
             vault_decrypt(
-                file.as_deref(),
-                outfile.as_deref(),
+                file,
+                outfile,
                 password,
                 password_file,
                 verbose,
@@ -566,17 +575,7 @@ async fn main() -> anyhow::Result<()> {
             password_file,
             base64,
             verbose,
-        } => {
-            vault_encrypt(
-                file.as_deref(),
-                outfile.as_deref(),
-                password,
-                password_file,
-                base64,
-                verbose,
-            )
-            .await?
-        }
+        } => vault_encrypt(file, outfile, password, password_file, base64, verbose).await?,
         Opt::View {
             file,
             password,
@@ -652,8 +651,8 @@ mod tests {
             .expect("could not write to infile");
 
         vault_encrypt(
-            Some(file_input.path()),
-            Some(file_output.path()),
+            Some(io::IOType::FileIO(file_input.path().to_owned())),
+            Some(io::IOType::FileIO(file_output.path().to_owned())),
             Some(password.clone()),
             None,
             true,
@@ -666,8 +665,8 @@ mod tests {
         assert_ne!(ciphertext, plaintext);
 
         vault_decrypt(
-            Some(file_output.path()),
-            Some(file_decrypted.path()),
+            Some(io::IOType::FileIO(file_output.path().to_owned())),
+            Some(io::IOType::FileIO(file_decrypted.path().to_owned())),
             Some(password),
             None,
             false,

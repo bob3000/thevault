@@ -1,12 +1,14 @@
+use crate::io::IOType;
 use anyhow::Context;
 use secstr::SecVec;
 use std::fs;
 use std::io::prelude::*;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 use tokio::fs as tokio_fs;
 use tokio::io as tokio_io;
 use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::net::{TcpListener, TcpStream};
 
 // This function is searches for the encryption / decryption password on
 // different places in the following order:
@@ -36,38 +38,58 @@ pub fn get_password(
     Ok(SecVec::from(pass.trim().to_owned()))
 }
 
-pub fn filesize(file: Option<&Path>) -> u64 {
-    match file {
-        Some(path) if path.metadata().is_ok() => path.metadata().unwrap().len(),
-        Some(_) => 0,
-        None => 0,
+pub fn filesize(file: PathBuf) -> u64 {
+    if file.metadata().is_ok() {
+        file.metadata().unwrap().len()
+    } else {
+        0
     }
 }
 
 pub async fn get_reader(
-    file: Option<&Path>,
+    source: Option<IOType>,
 ) -> anyhow::Result<Box<dyn AsyncRead + Unpin + Send + Sync>> {
-    match file {
-        Some(path) => {
-            let f = tokio_fs::File::open(path)
-                .await
-                .with_context(|| format!("failed to open input file {}", path.to_str().unwrap()))?;
-            Ok(Box::new(f))
-        }
+    match source {
+        Some(src) => match src {
+            IOType::FileIO(path) => {
+                let f = tokio_fs::File::open(&path).await.with_context(|| {
+                    format!("failed to open input file {}", path.to_str().unwrap())
+                })?;
+                Ok(Box::new(f))
+            }
+            IOType::NetworkIO(addr) => {
+                let mut listener = TcpListener::bind(&addr)
+                    .await
+                    .with_context(|| format!("failed to bind to address {}", addr))?;
+                let (stream, _) = listener
+                    .accept()
+                    .await
+                    .with_context(|| format!("failed accept from address {}", addr))?;
+                Ok(Box::new(stream))
+            }
+        },
         None => Ok(Box::new(tokio_io::stdin())),
     }
 }
 
 pub async fn get_writer(
-    output: Option<&Path>,
+    target: Option<IOType>,
 ) -> anyhow::Result<Box<dyn AsyncWrite + Unpin + Send + Sync>> {
-    match output {
-        Some(path) => {
-            let f = tokio_fs::File::create(path).await.with_context(|| {
-                format!("failed to create output file {}", path.to_str().unwrap())
-            })?;
-            Ok(Box::new(f))
-        }
+    match target {
+        Some(tar) => match tar {
+            IOType::FileIO(path) => {
+                let f = tokio_fs::File::create(&path).await.with_context(|| {
+                    format!("failed to create output file {}", path.to_str().unwrap())
+                })?;
+                Ok(Box::new(f))
+            }
+            IOType::NetworkIO(addr) => {
+                let stream = TcpStream::connect(&addr)
+                    .await
+                    .with_context(|| format!("failed to connect to  address {}", addr))?;
+                Ok(Box::new(stream))
+            }
+        },
         None => Ok(Box::new(tokio_io::stdout())),
     }
 }
