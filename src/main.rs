@@ -7,7 +7,8 @@ encryption using passwords. All cryptographic actions rely on libraries from the
 
 ## Features
 
-- encrypt / decrypt a file inplace or to a different destination
+- encrypt / decrypt files
+- encrypt / decrypt network traffic
 - view encrypted file
 - edit encrypted file
 - read password from password file, environment variable, command line parameter
@@ -135,6 +136,31 @@ Beautiful is better than ugly.
 Explicit is better than implicit.
 Simple is better than complex.
 Complex is better than complicated.
+```
+
+### Encrypt network stream
+
+```sh
+❯ nc -l 4000 &
+
+❯ thevault encrypt -b -f tcp://127.0.0.1:9999 -o tcp://127.0.0.1:4000
+Password:
+```
+
+On a different terminal
+
+```sh
+❯ echo "Hello World" | nc localhost 9999
+```
+
+### Write network stream to encrypted file
+
+```sh
+❯ curl -s https://i.imgur.com/yC5yVwQ.jpeg | thevault encrypt -o cat.aes
+Password:
+
+❯ thevault decrypt -f cat.aes | display
+Password:
 ```
 */
 
