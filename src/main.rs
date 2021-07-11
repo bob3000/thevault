@@ -592,6 +592,67 @@ mod tests {
     use std::fs;
     use std::io::Write;
     use std::process::{Command, Stdio};
+    use tokio::net::{TcpListener, TcpStream};
+
+    #[tokio::test]
+    async fn from_tcp() {
+        let encrypt_cmd = Command::new("./target/release/thevault")
+            .env("THEVAULTPASS", "password")
+            .arg("encrypt")
+            .arg("-f")
+            .arg("tcp://127.0.0.1:9998")
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("failed to spawn child process, try to run: cargo build --release");
+        let plaintext = b"Encrypt this text!";
+        {
+            let mut count = 0;
+            loop {
+                match TcpStream::connect("127.0.0.1:9998").await {
+                    Ok(mut stream) => {
+                        stream.write_all(plaintext).await.unwrap();
+                        break;
+                    }
+                    Err(_) => {
+                        std::thread::sleep(std::time::Duration::from_secs(1));
+                    }
+                }
+                count += 1;
+                if count > 5 {
+                    break;
+                }
+            }
+        }
+        let encrypt_output = encrypt_cmd
+            .wait_with_output()
+            .expect("failed to read from stdout");
+        let ciphertext = encrypt_output.stdout;
+        assert_ne!(ciphertext, plaintext);
+
+        let listen_handle = tokio::spawn(async move {
+            let mut listener = TcpListener::bind("127.0.0.1:9999").await.unwrap();
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut decrypted_text = [0u8; 32];
+            let n = socket.read(&mut decrypted_text).await.unwrap();
+            assert_eq!(&decrypted_text[..n], plaintext);
+        });
+
+        let mut decrypt_cmd = Command::new("./target/release/thevault")
+            .env("THEVAULTPASS", "password")
+            .arg("decrypt")
+            .arg("-o")
+            .arg("tcp://127.0.0.1:9999")
+            .stdin(Stdio::piped())
+            .spawn()
+            .expect("failed to spawn child process, try to run: cargo build --release");
+        {
+            let stdin = decrypt_cmd.stdin.as_mut().expect("failed to open stdin");
+            stdin
+                .write_all(&ciphertext)
+                .expect("failed to write to stdin");
+        }
+        listen_handle.await.unwrap();
+    }
 
     #[test]
     fn from_stdin() {
