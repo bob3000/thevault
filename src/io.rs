@@ -1,15 +1,35 @@
 use anyhow::Context;
 use async_trait::async_trait;
 use futures::future::Future;
+use std::ffi::OsStr;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::sync::mpsc;
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, Mutex};
 
 // Size of a chunks being read from the input source
 pub const CHUNK_SIZE: u64 = 1024;
 pub type BoxAsyncReader = Box<dyn AsyncRead + Unpin + Send + Sync>;
 pub type RefAsyncWriter<'a> = &'a mut (dyn AsyncWrite + Unpin + Send + Sync);
+
+#[derive(Debug, Clone)]
+pub enum IOType {
+    FileIO(PathBuf),
+    NetworkIO(String),
+}
+
+impl<'a> From<&'a OsStr> for IOType {
+    fn from(osstr: &'a OsStr) -> Self {
+        const TCP_TARGET_MARKER: &str = "tcp://";
+        let target = osstr.to_string_lossy();
+        if target.starts_with(TCP_TARGET_MARKER) {
+            let t: Vec<&str> = target.split(TCP_TARGET_MARKER).collect();
+            IOType::NetworkIO(t[1].to_string())
+        } else {
+            IOType::FileIO(PathBuf::from(target.to_string()))
+        }
+    }
+}
 
 struct ChunkReader;
 #[async_trait]
