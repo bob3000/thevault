@@ -1,12 +1,14 @@
 # The Vault
 
 The Vault is a command line file encryption tool. It performs symmetric AES
-encryption using passwords. All cryptographic actions rely on libraries from the
-[rust crypto](https://github.com/RustCrypto/block-ciphers) project.
+encryption using passwords. All cryptographic actions rely on the
+[sodiumoxide crate](https://crates.io/crates/sodiumoxide) which itself is
+based on [libsodium](https://doc.libsodium.org/).
 
 ## Features
 
 - encrypt / decrypt files
+- receive data via stdin / send data to stdout
 - encrypt / decrypt network traffic
 - view encrypted file
 - edit encrypted file
